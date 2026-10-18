@@ -322,7 +322,8 @@ static bool handle_configitem(const char keyword[], const char *value)
     }
     break;
   case at_str:
-    if (arglen > opt->max) err = "string too long";
+    // Leave room for the terminating NUL in the destination buffer.
+    if (arglen >= (size_t)opt->max) err = "string too long";
     break;
   }
   else if (opt->argtype == at_num || (opt->argtype == at_str && opt->min))
@@ -358,7 +359,8 @@ static bool read_config(void)
     for (j=0; localbuf[j] && localbuf[j] != '#'; ++j);
     localbuf[j] = '\0';
 
-    char key[100], val[PATH_MAX], dummy[2];
+    // Extra byte in each buffer for sscanf's terminating NUL.
+    char key[101], val[PATH_MAX+1], dummy[2];
     // TODO: Check that quotes are closed properly
     if (sscanf(localbuf," %100[a-z_] = \"%"PMS"[^\"]\" %1s",key,val,dummy)==2 ||
 	sscanf(localbuf," %100[a-z_] = %"PMS"s %1s",key,val,dummy) == 2)

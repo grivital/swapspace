@@ -119,7 +119,7 @@ static bool read_meminfo_item(FILE *fp, struct meminfo_item *result)
 
   char fact[20];
   const int x = sscanf(localbuf,
-      "%[^:]: %lld %19s",
+      "%199[^:]: %lld %19s",
       result->entry,
       &result->value,
       fact);

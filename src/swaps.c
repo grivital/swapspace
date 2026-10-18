@@ -521,7 +521,8 @@ static memsize_t make_swapfile(const char file[], memsize_t size)
 /// Information about a swapfile
 struct swapfile_info
 {
-  char name[PATH_MAX];
+  // Extra byte for sscanf's terminating NUL.
+  char name[PATH_MAX+1];
   int seqno;
   memsize_t size;
   memsize_t used;
@@ -631,7 +632,8 @@ static bool get_swapfile_status(FILE *fp, struct swapfile_info *result)
 {
   while (fgets(localbuf, sizeof(localbuf), fp))
   {
-    char type[100];
+    // Extra byte for sscanf's terminating NUL.
+    char type[101];
     char c;
     const int x=sscanf(localbuf,
 	"%"PMS"s %100s %lld %lld %c",
