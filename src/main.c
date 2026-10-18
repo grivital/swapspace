@@ -119,7 +119,8 @@ static bool writepid(pid_t pid)
 {
   snprintf(localbuf, sizeof(localbuf), "%d\n", pid);
   const size_t len = strlen(localbuf);
-  if (unlikely(write(pidfd, localbuf, len) < len))
+  const ssize_t written = write(pidfd, localbuf, len);
+  if (unlikely(written < 0 || (size_t)written < len))
   {
     log_perr_str(LOG_ERR, "Could not write pidfile", pidfile, errno);
     return false;
@@ -137,7 +138,8 @@ static bool startpidfile(void)
 {
   assert(pidfd == -1);
   if (!make_pidfile) return true;
-  pidfd = open(pidfile, O_WRONLY|O_CREAT|O_EXCL, O_WRONLY);
+  pidfd = open(pidfile, O_WRONLY|O_CREAT|O_EXCL|O_CLOEXEC,
+      S_IRUSR|S_IWUSR|S_IRGRP|S_IROTH);
   if (unlikely(pidfd == -1))
   {
     if (errno == EEXIST)
@@ -329,7 +331,8 @@ int main(int argc, char *argv[])
        * from the parent, not the child process so that we're sure that the
        * pidfile is in a stable state when the parent exits.
        */
-      lseek(pidfd, 0, SEEK_SET);
+      if (unlikely(ftruncate(pidfd, 0) != 0 || lseek(pidfd, 0, SEEK_SET) == -1))
+        log_perr_str(LOG_ERR, "Could not reset pidfile", pidfile, errno);
 #ifndef NO_CONFIG
       if (verbose) logm(LOG_DEBUG, "got process id %d", pid);
 #endif
