@@ -1,3 +1,13 @@
+v1.18.2
+=======
++ Fix --enable-noconfig and --enable-nodebug builds
++ Fix buffer overruns in configuration and /proc parsing
++ Make --paranoid actually overwrite retired swapfiles
++ Create the pidfile with sane permissions and detect write errors
++ Handle /proc/swaps and /proc/meminfo read errors without losing state
++ Fix swapfile size rounding and tiny allocation requests
++ Add unit/integration tests, CI, and a meminfo parser fuzz target
+
 v1.18.1
 =======
 + Ensure standard output is always line-buffered
