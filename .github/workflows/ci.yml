@@ -64,6 +64,7 @@ jobs:
           make
           make check
       - name: Fuzz the /proc/meminfo parser
+        working-directory: build
         run: |
           mkdir -p corpus
           printf 'MemTotal: 16384 kB\nMemFree: 8192 kB\n' > corpus/seed
