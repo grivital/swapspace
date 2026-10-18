@@ -625,10 +625,10 @@ static bool check_proc_swaps_header(const char buf[])
  * as well as non-swapspace swapfiles, are ignored.  Status of known swapfiles
  * found in the list is updated along the way.
  *
- * Returns false if no more swapfile descriptions were found; in that case,
- * result will contain garbage.  Check ferror(fp) to distinguish eof from error.
+ * @return 1 if a swapspace-managed swapfile was found, 0 at end of file, or
+ * -1 on a parse or read error.
  */
-static bool get_swapfile_status(FILE *fp, struct swapfile_info *result)
+static int get_swapfile_status(FILE *fp, struct swapfile_info *result)
 {
   while (fgets(localbuf, sizeof(localbuf), fp))
   {
@@ -642,8 +642,13 @@ static bool get_swapfile_status(FILE *fp, struct swapfile_info *result)
 	&result->size,
 	&result->used,
 	&c);
-    if (unlikely(x < 5) && likely(localbuf[0]))
+    if (unlikely(x < 5))
     {
+      // Ignore blank or whitespace-only lines.
+      const char *p = localbuf;
+      while (*p && isspace((unsigned char)*p)) ++p;
+      if (!*p) continue;
+
       /* Nasty special case: if /proc/swaps is nonempty, it should have a header
        * line of a fixed format that we'd like to check.  Unfortunately, some
        * kernels including at least 2.6.10 (and who knows how many else) have a
@@ -661,8 +666,11 @@ static bool get_swapfile_status(FILE *fp, struct swapfile_info *result)
       if (!check_proc_swaps_header(localbuf))
       {
         logm(LOG_ERR, "Parse error in /proc/swaps: '%s'", localbuf);
-        return false;
+        return -1;
       }
+
+      // It was the header line; there is nothing to account for.
+      continue;
     }
 
     // /proc/swaps appears to report sizes in 1 KB blocks
@@ -717,10 +725,10 @@ static bool get_swapfile_status(FILE *fp, struct swapfile_info *result)
       swapfiles[result->seqno].size = result->size;
       swapfiles[result->seqno].used = result->used;
       swapfiles[result->seqno].observed_in_wild = true;
-      return true;
+      return 1;
     }
   }
-  return false;
+  return ferror(fp) ? -1 : 0;
 }
 
 
@@ -738,17 +746,22 @@ bool read_proc_swaps(void)
 
   for (int i=0; i<MAX_SWAPFILES; ++i) swapfiles[i].observed_in_wild = false;
 
-  struct swapfile_info inf;
-  while (get_swapfile_status(fp, &inf));
-  const bool result = !ferror(fp);
+  struct swapfile_info inf = { "", 0, 0, 0 };
+  int status;
+  while ((status = get_swapfile_status(fp, &inf)) > 0);
   fclose(fp);
+
+  /* A malformed or partially read file must not make us forget about
+   * swapfiles that may still be active.  Keep the old table and retry later.
+   */
+  if (unlikely(status < 0)) return false;
 
   // Scratch from swapfiles[] any swapfiles that were deactivated from outside
   for (int i=0; i<MAX_SWAPFILES; ++i)
     if (unlikely(swapfiles[i].size && !swapfiles[i].observed_in_wild))
       swapfiles[i].size = 0;
 
-  return result;
+  return true;
 }
 
 
