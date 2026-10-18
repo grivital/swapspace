@@ -43,6 +43,7 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA
 #include <linux/fs.h>
 #include <linux/magic.h>
 
+#include "calc.h"
 #include "log.h"
 #include "opts.h"
 #include "state.h"
@@ -71,19 +72,6 @@ static memsize_t min_swapsize = 4*MEGA;
  * limits.
  */
 static memsize_t max_swapsize = 2*TERA;
-
-/// Truncate n to a multiple of memory page size
-static memsize_t trunc_to_page(memsize_t n)
-{
-  return n & ~((memsize_t)getpagesize()-1);
-}
-
-/// Round n upwards to multiple of page size
-static memsize_t ext_to_page(memsize_t n)
-{
-  return trunc_to_page(n + getpagesize()-1);
-}
-
 
 #ifndef NO_CONFIG
 char *set_swappath(long long dummy)

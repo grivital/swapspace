@@ -28,6 +28,7 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA
 #include <stdio.h>
 #include <string.h>
 
+#include "calc.h"
 #include "log.h"
 #include "memory.h"
 #include "opts.h"
@@ -379,59 +380,6 @@ static inline int pct_free(const struct memstate *st)
 }
 
 
-static memsize_t ideal_swapsize(memsize_t totalspace, memsize_t freespace)
-{
-  /* This is phrased rather oddly, and a fairly high rounding error is
-   * introduced.
-   *
-   * The reason is to avoid overflows in the computation: we effectively compute
-   * at a granularity of 100 bytes to avoid overflows, then multiply by 100
-   * again to get back to an approximation of our original number.
-   *
-   * This might conceivably be a problem if freetarget is ridiculously close to
-   * either freespace threshold.
-   *
-   * We try to find the ideal allocation size x>0 such that if we add x free
-   * bytes (i.e. we add it to both freespace and totalspace), we end up at
-   * exactly our freetarget.  In mathematical terms, i.e. without caring about
-   * rounding or overflows:
-   *
-   * 	(freespace+x)/(totalspace+x) = freetarget/100			<=>
-   * 	freespace+x = freetarget*(totalspace+x)/100			<=>
-   * 	100*(freespace+x)/freetarget = totalspace+x			<=>
-   * 	100*freespace/freetarget+100*x/freetarget = totalspace+x	<=>
-   * 	100*freespace/freetarget-totalspace = x - 100*x/freetarget	<=>
-   * 	x-100*x/freetarget = 100*freespace/freetarget - totalspace	<=>
-   * 	x*(1-100/freetarget) = 100*freespace/freetarget - totalspace	<=>
-   *
-   * 	x = (100*freespace/freetarget - totalspace) / (1 - 100/freetarget)
-   * 	  = (100*freespace - freetarget*totalspace) / (freetarget - 100)
-   *
-   * This latter expression we convert to an overflow-free form by dividing both
-   * freespace and totalspace by some constant p, and multiplying by this same p
-   * afterwards:
-   *
-   *  x/p = (100*freespace/p - freetarget*totalspace/p) / (freetarget-100)
-   *
-   * The natural choice for p is 100, since it gives up the exact minimum
-   * precision while ensuring that both 100*freespace/p and (given that
-   * freetarget<100) freetarget*totalspace/p remain within the range of
-   * representable numbers, assuming that freespace and totalspace were
-   * themselves representable to begin with.
-   *
-   * For p==100 we get:
-   *
-   * x/100 = (100*freespace/100-freetarget*totalspace/100) / (freetarget-100)
-   *       = (freespace - freetarget*totalspace/100) / (freetarget-100)
-   *
-   * Note that one of the two divisions by p has disappeared.  To recover as
-   * much of that lost precision of the remaining division-by-p, we round to the
-   * nearest integer, not downwards:
-   */
-  return 100 * ((freespace-freetarget*((totalspace+50)/100))/(freetarget-100));
-}
-
-
 memsize_t memory_target(void)
 {
   /* Determining how much memory we need is a pretty difficult job.  One reason
@@ -452,7 +400,7 @@ memsize_t memory_target(void)
   // Policy: once we hit either freelimit, steer for "freetarget"% free space
   // TODO: Use /proc/sys/vm/min_free_kbytes when no swap yet allocated?
   if (freepct < lower_freelimit || freepct > upper_freelimit)
-    request = ideal_swapsize(space_total(&st), space_free(&st));
+    request = ideal_swapsize(space_total(&st), space_free(&st), freetarget);
 
   return request;
 }
@@ -465,7 +413,7 @@ memsize_t minimal_swapfile(void)
 
   const memsize_t total = space_total(&st);
   // Compute desired swapfile size if we're exactly at lower_freelimit
-  return ideal_swapsize(total, (total/100)*lower_freelimit);
+  return ideal_swapsize(total, (total/100)*lower_freelimit, freetarget);
 }
 
 

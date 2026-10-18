@@ -21,18 +21,20 @@ RM=rm -f
 all : swapspace hog
 
 
-SWAPSPACEOBJS=log.o main.o memory.o opts.o state.o support.o swaps.o
+SWAPSPACEOBJS=calc.o log.o main.o memory.o opts.o state.o support.o swaps.o
 
 swapspace : $(SWAPSPACEOBJS)
 	$(CC) $^ $(LDFLAGS) $(LOADLIBES) $(LDLIBS) -o $@
 
 hog : hog.o
 
+calc.o : calc.c calc.h memory.h
+
 log.o : log.c log.h main.h memory.h
 
 main.o : main.c config.h env.h log.h main.h memory.h support.h
 
-memory.o : memory.c config.h env.h log.h main.h memory.h support.h
+memory.o : memory.c calc.h config.h env.h log.h main.h memory.h support.h
 
 opts.o : opts.c opts.h main.h ../VERSION ../DATE
 
@@ -40,7 +42,7 @@ state.o : state.c state.h log.h main.h memory.h support.h swaps.h
 
 support.o : support.c config.h env.h support.h
 
-swaps.o : swaps.c config.h env.h log.h main.h memory.h state.h support.h swaps.h
+swaps.o : swaps.c calc.h config.h env.h log.h main.h memory.h state.h support.h swaps.h
 
 clean :
 	$(RM) $(SWAPSPACEOBJS) hog.o

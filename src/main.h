@@ -21,11 +21,8 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA
 #ifndef SWAPSPACE_MAIN_H
 #define SWAPSPACE_MAIN_H
 
+#include <stdbool.h>
 #include <time.h>
-
-/// I thought C99 had this built in... Maybe I'm doing something wrong.
-typedef int bool;
-enum { false=0, true=1 };
 
 #define KILO (1024LL)
 #define MEGA (KILO*KILO)
