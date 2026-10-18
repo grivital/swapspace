@@ -41,4 +41,8 @@ memsize_t ext_to_page(memsize_t n);
 memsize_t ideal_swapsize(memsize_t totalspace, memsize_t freespace,
     int freetarget);
 
+/// Parse the "some avg10" percentage from a /proc/pressure/memory line
+/** @return true if line is the "some" line and percent was set */
+bool parse_psi_line(const char line[], int *percent);
+
 #endif

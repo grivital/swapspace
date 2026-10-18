@@ -131,6 +131,13 @@ percentage is exceeded, try to deallocate swap space.
 \fB\-v\fR, \fB\-\-verbose\fR
 Log debug information to system log and/or standard output, as appropriate.
 .TP
+\fB\-x\fR \fIp\fR, \fB\-\-psi_threshold\fR=\fIp\fR
+Treat the system as under memory pressure when the kernel's Pressure Stall
+Information reports a "some avg10" value above \fIp\fR percent, and avoid
+freeing swap while under pressure.  Set to 0 to disable.  PSI requires Linux
+4.20 or later; the option has no effect when \fI/proc/pressure/memory\fR is
+unavailable.
+.TP
 \fB\-V\fR, \fB\-\-version\fR
 Print program version information and exit.
 .PP

@@ -54,6 +54,21 @@ int main(void)
   // Targets that are not the default work the same way.
   CHECK(ideal_swapsize(100000, 40000, 50) == 20000);
 
+  // PSI line parsing.
+  int psi = -1;
+  CHECK(parse_psi_line(
+      "some avg10=1.23 avg60=0.00 avg300=0.00 total=0", &psi));
+  CHECK(psi == 1);
+  CHECK(parse_psi_line(
+      "some avg10=12.99 avg60=0.00 avg300=0.00 total=0", &psi));
+  CHECK(psi == 12);
+  CHECK(!parse_psi_line(
+      "full avg10=99.00 avg60=0.00 avg300=0.00 total=0", &psi));
+  CHECK(!parse_psi_line("garbage", &psi));
+  CHECK(!parse_psi_line("some avg10=-1.0", &psi));
+  CHECK(parse_psi_line("some avg10=150.0", &psi));
+  CHECK(psi == 100);
+
   if (failures) fprintf(stderr, "%d check(s) failed\n", failures);
   return failures ? 1 : 0;
 }

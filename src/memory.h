@@ -70,6 +70,7 @@ char *set_upper_freelimit(long long pct);
 char *set_freetarget(long long pct);
 char *set_buffer_elasticity(long long pct);
 char *set_cache_elasticity(long long pct);
+char *set_psi_threshold(long long pct);
 
 bool memory_check_config(void);
 #endif

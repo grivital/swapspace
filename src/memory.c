@@ -51,6 +51,10 @@ static int buffer_elasticity=30;
 /// Configuration item: what percentage of cache space do we consider "free"?
 static int cache_elasticity=80;
 
+/// Configuration item: PSI "some avg10" pressure threshold in percent
+/** Zero disables PSI-based allocation triggers. */
+static int psi_threshold=10;
+
 // Track whether MemAvailable is present in /proc/meminfo
 static bool kernel_mem_available = false;
 
@@ -78,6 +82,11 @@ char *set_buffer_elasticity(long long pct)
 char *set_cache_elasticity(long long pct)
 {
   cache_elasticity = (int)pct;
+  return NULL;
+}
+char *set_psi_threshold(long long pct)
+{
+  psi_threshold = (int)pct;
   return NULL;
 }
 
@@ -396,6 +405,28 @@ static inline int pct_free(const struct memstate *st)
 }
 
 
+/// Read the "some avg10" memory pressure percentage from PSI
+/** Returns false if PSI is unavailable (kernel before 4.20, or no /proc). */
+static bool read_psi(int *percent)
+{
+  FILE *fp = fopen("/proc/pressure/memory", "r");
+  if (unlikely(!fp)) return false;
+
+  bool found = false;
+  while (fgets(localbuf, sizeof(localbuf), fp))
+  {
+    if (parse_psi_line(localbuf, percent))
+    {
+      found = true;
+      break;
+    }
+  }
+  fclose(fp);
+
+  return found;
+}
+
+
 memsize_t memory_target(void)
 {
   /* Determining how much memory we need is a pretty difficult job.  One reason
@@ -413,10 +444,22 @@ memsize_t memory_target(void)
   const int freepct = pct_free(&st);
   memsize_t request = 0;
 
+  /* Ask the kernel whether tasks are actually stalling.  PSI is a much more
+   * direct signal than our free-memory estimate, so under pressure we steer
+   * towards freetarget even before lower_freelimit is reached.
+   */
+  int psi = 0;
+  const bool pressure =
+    (psi_threshold > 0) && read_psi(&psi) && (psi >= psi_threshold);
+
   // Policy: once we hit either freelimit, steer for "freetarget"% free space
   // TODO: Use /proc/sys/vm/min_free_kbytes when no swap yet allocated?
-  if (freepct < lower_freelimit || freepct > upper_freelimit)
+  if (freepct < lower_freelimit || freepct > upper_freelimit ||
+      (pressure && freepct <= freetarget))
     request = ideal_swapsize(space_total(&st), space_free(&st), freetarget);
+
+  // Freeing swap while tasks are stalling would only make things worse.
+  if (pressure && request < 0) request = 0;
 
   return request;
 }
@@ -478,4 +521,10 @@ void dump_memory(void)
       lower_freelimit,
       pf,
       upper_freelimit);
+
+  int psi = 0;
+  if (read_psi(&psi))
+    logm(LOG_INFO,
+	"memory pressure: %d%% (some avg10, threshold %d%%)",
+	psi, psi_threshold);
 }

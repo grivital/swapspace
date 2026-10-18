@@ -28,6 +28,7 @@ swappath = "$TMP"
 lower_freelimit = 50
 freetarget = 50
 upper_freelimit = 60
+psi_threshold = 5
 EOF
 
 "$BIN" -i -c "$TMP/good.conf" >/dev/null 2>&1 ||
@@ -51,6 +52,15 @@ EOF
 
 if "$BIN" -i -c "$TMP/overflow.conf" >/dev/null 2>&1; then
   fail "out-of-range numeric option accepted"
+fi
+
+cat >"$TMP/badpsi.conf" <<EOF
+swappath = "$TMP"
+psi_threshold = 101
+EOF
+
+if "$BIN" -i -c "$TMP/badpsi.conf" >/dev/null 2>&1; then
+  fail "out-of-range psi_threshold accepted"
 fi
 
 cat >"$TMP/syntax.conf" <<EOF

@@ -21,6 +21,10 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA
 */
 #include "env.h"
 
+#include <ctype.h>
+#include <errno.h>
+#include <stdlib.h>
+#include <string.h>
 #include <unistd.h>
 
 #include "calc.h"
@@ -89,4 +93,32 @@ memsize_t ideal_swapsize(memsize_t totalspace, memsize_t freespace,
    * nearest integer, not downwards:
    */
   return 100 * ((freespace-freetarget*((totalspace+50)/100))/(freetarget-100));
+}
+
+
+bool parse_psi_line(const char line[], int *percent)
+{
+  if (!line || !percent) return false;
+
+  const char *p = line;
+  while (isspace((unsigned char)*p)) ++p;
+
+  // Only the "some" line is interesting: it tells us that at least one task
+  // stalled.  "full" means every task stalled, which is too late to act on.
+  if (strncmp(p, "some", 4) != 0) return false;
+  if (p[4] && !isspace((unsigned char)p[4])) return false;
+
+  p = strstr(p, "avg10=");
+  if (!p) return false;
+  p += 6;
+
+  char *endptr;
+  errno = 0;
+  long value = strtol(p, &endptr, 10);
+  if (errno == ERANGE || endptr == p || value < 0) return false;
+
+  // The fractional part is irrelevant for a threshold comparison.
+  if (value > 100) value = 100;
+  *percent = (int)value;
+  return true;
 }

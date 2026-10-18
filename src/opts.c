@@ -114,6 +114,8 @@ static const struct option options[] =
   "Wipe disk space occupied swapfiles after use" },
   { "pidfile",		'p', at_str,  0, PATH_MAX, set_pidfile,
   "Write process identifier to file s" },
+  { "psi_threshold",	'x', at_num,  0, 100, set_psi_threshold,
+  "Treat memory as under pressure when PSI some avg10 exceeds n%" },
   { "quiet",		'q', at_none, 0, 0, set_quiet,
   "Suppress informational output" },
   { "swappath",		's', at_str,  1, PATH_MAX, set_swappath,
