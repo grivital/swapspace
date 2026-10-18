@@ -81,7 +81,7 @@ static memsize_t trunc_to_page(memsize_t n)
 /// Round n upwards to multiple of page size
 static memsize_t ext_to_page(memsize_t n)
 {
-  return trunc_to_page(n) + getpagesize()-1;
+  return trunc_to_page(n + getpagesize()-1);
 }
 
 
@@ -423,18 +423,48 @@ static memsize_t write_data(int fd, memsize_t bytes, bool persevere)
   memset(localbuf, 0, sizeof(localbuf));
 
   memsize_t written = 0;
-  ssize_t block;
 
   // Main writing loop.  Repeat until we've written all bytes, or until we fail.
   // EINTR is not considered a failure if we've been told to persevere.
-  do
+  while (written < bytes)
   {
-    block = write(fd, localbuf, MIN(sizeof(localbuf),bytes-written));
+    const ssize_t block =
+      write(fd, localbuf, MIN(sizeof(localbuf), bytes-written));
+    if (unlikely(block < 0))
+    {
+      if (errno == EINTR && persevere) continue;
+      break;
+    }
     written += block;
   }
-  while ((written < bytes) && (block >= 0 || (errno == EINTR && persevere)));
 
-  // Byte count may end up a little low if write() returns -1.  That's okay.
+  return written;
+}
+
+
+/// Overwrite an existing file with zeroes, bypassing allocation shortcuts.
+/** posix_fallocate() only guarantees that newly allocated blocks read as zero;
+ * it does not touch data that was already there.  It can therefore not be used
+ * to wipe a swapfile, so this always writes the zero buffer over the file.
+ *
+ * @return number of bytes written
+ */
+static memsize_t overwrite_data(int fd, memsize_t bytes)
+{
+  memset(localbuf, 0, sizeof(localbuf));
+
+  memsize_t written = 0;
+  while (written < bytes)
+  {
+    const ssize_t block =
+      write(fd, localbuf, MIN(sizeof(localbuf), bytes-written));
+    if (unlikely(block < 0))
+    {
+      if (errno == EINTR) continue;
+      break;
+    }
+    written += block;
+  }
 
   return written;
 }
@@ -798,7 +828,12 @@ static bool retire_swapfile(int file)
 
 #ifndef NO_CONFIG
   if (fd != -1) {
-    write_data(fd, swapfiles[file].size, true);
+    const memsize_t size = swapfiles[file].size;
+    const memsize_t wiped = overwrite_data(fd, size);
+    if (unlikely(wiped < size))
+      log_perr_str(LOG_WARNING, "Could not wipe swapfile", namebuf, errno);
+    if (unlikely(fsync(fd) != 0))
+      log_perr(LOG_WARNING, "Could not flush swapfile", errno);
     close(fd);
   }
 #endif
