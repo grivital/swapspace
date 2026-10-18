@@ -1,5 +1,5 @@
 .\" swapspace manpage
-.TH SWAPSPACE 8 "July 2005" "swapspace 1.5" "Linux System Administration"
+.TH SWAPSPACE 8 "October 2026" "swapspace 1.18.2" "Linux System Administration"
 .SH NAME
 swapspace \- dynamically manage swap space
 .SH SYNOPSIS
@@ -29,7 +29,7 @@ successfully erased, or 1 otherwise.
 Display usage information and exit.
 .TP
 \fB\-p\fR
-Write process identifier to \fI/var/lib/swapspace.pid\fR when starting (and
+Write process identifier to \fI/var/run/swapspace.pid\fR when starting (and
 delete it when shutting down).  The file's name and location cannot be changed
 in the unconfigurable version.
 .TP
@@ -96,7 +96,7 @@ should be no need to change this variable except for testing.
 .TP
 \fB\-p\fR [\fIfile\fR], \fB\-\-pidfile\fR[=\fIfile\fR]
 Write process identifier to \fIfile\fR when starting (and delete \fIfile\fR when
-shutting down); defaults to \fI/var/lib/swapspace.pid\fR.
+shutting down); defaults to \fI/var/run/swapspace.pid\fR.
 .TP
 \fB\-P\fR, \fB\-\-paranoid\fR
 Overwrite retired swapfiles before they are deleted, so an attacker who obtains
