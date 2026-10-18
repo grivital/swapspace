@@ -378,15 +378,23 @@ memsize_t swapfs_size(void)
 
 /// Turn an existing file into an active swap.  Clobbers localbuf.
 /**
+ * @param fault if not NULL, receives the errno value from a failed swapon(),
+ *        or zero on success.  Logging may clobber errno, so callers must not
+ *        rely on errno after this call.
  * @return Whether file was activated successfully.
  */
-static bool enable_swapfile(const char file[])
+static bool enable_swapfile(const char file[], int *fault)
 {
   runcommand("mkswap", file);
-  const bool ok = (swapon(file, 0) == 0);
-  if (unlikely(!ok))
-    log_perr_str(LOG_ERR, "Could not enable swapfile", file, errno);
-  return ok;
+  if (unlikely(swapon(file, 0) != 0))
+  {
+    const int err = errno;
+    if (fault) *fault = err;
+    log_perr_str(LOG_ERR, "Could not enable swapfile", file, err);
+    return false;
+  }
+  if (fault) *fault = 0;
+  return true;
 }
 
 /// Write arbitrary data to swapfile.  Clobbers localbuf.
@@ -573,16 +581,37 @@ static bool valid_swapfile(const char filename[], int *seqno)
 
 static memsize_t filesize(const char name[])
 {
-  int fd = open(name, O_RDONLY|O_LARGEFILE|O_NOFOLLOW);
+  /* O_NONBLOCK keeps us from hanging on a FIFO that happens to have a numeric
+   * name; the regular-file check below rejects it afterwards.
+   */
+  int fd = open(name, O_RDONLY|O_LARGEFILE|O_NOFOLLOW|O_NONBLOCK);
   if (unlikely(fd == -1))
   {
     log_perr_str(LOG_WARNING, "Can't determine size of", name, errno);
-    return -1;
+    return MEMSIZE_ERROR;
   }
 
-  memsize_t pos = SEEK(fd, 0, SEEK_END);
+  struct stat st;
+  if (unlikely(fstat(fd, &st) == -1))
+  {
+    log_perr_str(LOG_WARNING, "Can't stat", name, errno);
+    close(fd);
+    return MEMSIZE_ERROR;
+  }
+  if (unlikely(!S_ISREG(st.st_mode)))
+  {
+    logm(LOG_WARNING, "Not a regular file: '%s'", name);
+    close(fd);
+    return MEMSIZE_ERROR;
+  }
+
+  const memsize_t pos = SEEK(fd, 0, SEEK_END);
   if (unlikely(pos == -1))
+  {
     log_perr_str(LOG_WARNING, "Can't determine size of", name, errno);
+    close(fd);
+    return MEMSIZE_ERROR;
+  }
 
   close(fd);
 
@@ -607,9 +636,31 @@ bool activate_old_swaps(void)
       if (!quiet) logm(LOG_INFO, "Found old swapfile '%d'", seqno);
 #endif
       const memsize_t size = filesize(d->d_name);
-      if (likely(size > min_swapsize && enable_swapfile(d->d_name)))
+      if (unlikely(size == MEMSIZE_ERROR))
+      {
+	/* We cannot tell what this file is, so leave it alone rather than
+	 * risk deleting an active swapfile.
+	 */
+#ifndef NO_CONFIG
+	if (!quiet)
+	  logm(LOG_NOTICE, "Skipping swapfile '%s' of unknown size",
+	      d->d_name);
+#endif
+	continue;
+      }
+
+      int err = 0;
+      if (likely(size >= min_swapsize && enable_swapfile(d->d_name, &err)))
       {
 	swapfiles[seqno].size = size;
+      }
+      else if (unlikely(err == EBUSY))
+      {
+	/* The file is active despite not showing up in /proc/swaps.  Do not
+	 * unlink it; there would be no way to swap it off by name afterwards.
+	 */
+	logm(LOG_NOTICE, "Swapfile '%s' is busy; leaving it in place",
+	    d->d_name);
       }
       else
       {
@@ -898,10 +949,26 @@ bool alloc_swapfile(memsize_t size)
    * two.
    */
   size = trunc_to_page(size) + 2*getpagesize();
-  const int newswap = find_free(sequence_number);
-  if (unlikely(swapfiles[newswap].size)) return false;	// No free slot, sorry!
 
-  if (unlikely(size > swapfs_free())) return false;	// Not enough disk space
+  /* Clamp tiny requests up to min_swapsize; make_swapfile() would otherwise
+   * reject them silently on every iteration.
+   */
+  if (unlikely(size < min_swapsize)) size = min_swapsize;
+
+  const int newswap = find_free(sequence_number);
+  if (unlikely(swapfiles[newswap].size))
+  {
+    // No free slot.  Turn to "diet" policy instead of retrying every second.
+    request_diet();
+    return false;
+  }
+
+  if (unlikely(size > swapfs_free()))
+  {
+    // Not enough disk space.  Free up excess swapfiles if we have any.
+    request_diet();
+    return false;
+  }
 
   // We can allocate another swapfile.  Great.
 #ifndef NO_CONFIG
@@ -910,13 +977,18 @@ bool alloc_swapfile(memsize_t size)
   char file[30];
   snprintf(file, sizeof(file), "%d", newswap);
   swapfiles[newswap].size = make_swapfile(file, size);
-  if (unlikely(!swapfiles[newswap].size)) return false;
+  if (unlikely(!swapfiles[newswap].size))
+  {
+    request_diet();
+    return false;
+  }
 
-  if (unlikely(!enable_swapfile(file)))
+  int err = 0;
+  if (unlikely(!enable_swapfile(file, &err)))
   {
     unlink(file);
     swapfiles[newswap].size = 0;
-    if (pfalloc_ok && errno == EINVAL)
+    if (pfalloc_ok && err == EINVAL)
     {
       logm(LOG_NOTICE, "Quick swapfile creation disabled.");
       // If we get EINVAL, then we can't actually use posix_fallocate
