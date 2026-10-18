@@ -39,6 +39,7 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA
 #include <sys/swap.h>
 #include <sys/types.h>
 #include <sys/ioctl.h>
+#include <sys/file.h>
 #include <sys/vfs.h>
 #include <linux/fs.h>
 #include <linux/magic.h>
@@ -59,6 +60,11 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA
 // Don't follow symlinks, if possible; they may pose a security risk
 #ifndef O_NOFOLLOW
 #define O_NOFOLLOW 0
+#endif
+
+// Require the swap path to be a directory, if possible
+#ifndef O_DIRECTORY
+#define O_DIRECTORY 0
 #endif
 
 static char swappath[PATH_MAX] = VARPREFIX"/lib/swapspace";
@@ -117,6 +123,44 @@ bool swaps_check_config(void)
 #endif
 
 
+/// Name of the lock file kept in the swap directory
+#define SWAPDIR_LOCKFILE ".swapspace.lock"
+
+/// Held for the lifetime of the process to keep instances from overlapping
+static int lockfd = -1;
+
+/// Take an exclusive lock on the swap directory
+/** The lock file is never removed: unlinking it would allow a second process to
+ * create a new file and lock that instead.  The kernel releases the lock when
+ * the process exits.
+ */
+static bool lock_swapdir(void)
+{
+  lockfd = open(SWAPDIR_LOCKFILE, O_RDWR|O_CREAT|O_CLOEXEC,
+      S_IRUSR|S_IWUSR);
+  if (unlikely(lockfd == -1))
+  {
+    log_perr(LOG_ERR, "Could not open swap directory lock", errno);
+    return false;
+  }
+
+  if (unlikely(flock(lockfd, LOCK_EX|LOCK_NB) == -1))
+  {
+    const int err = errno;
+    if (err == EWOULDBLOCK)
+      logm(LOG_ERR,
+	  "Another swapspace instance is already using the swap directory");
+    else
+      log_perr(LOG_ERR, "Could not lock swap directory", err);
+    close(lockfd);
+    lockfd = -1;
+    return false;
+  }
+
+  return true;
+}
+
+
 /// Change to swap directory, canonicalizing swappath in the process
 bool to_swapdir(void)
 {
@@ -168,13 +212,14 @@ bool to_swapdir(void)
       logm(LOG_ERR, "Not supported: swap path contains whitespace");
       return false;
     }
-  return swapdir_config();
+  if (!swapdir_config()) return false;
+  return lock_swapdir();
 }
 
 
 /// Configure permissions and attributes correctly on the swap directory
 bool swapdir_config(void) {
-  int fd = open(swappath, O_RDONLY);
+  int fd = open(swappath, O_RDONLY|O_DIRECTORY|O_NOFOLLOW);
   if (fd < 0) {
     log_perr(LOG_ERR, "Unable to open swap directory", errno);
 	return false;
@@ -193,7 +238,7 @@ bool swapdir_config(void) {
     {
       logm(LOG_DEBUG, "Actual: %o\nExpected: %o", swapdirstat.st_mode, mode);
     }
-    if (chmod(swappath, mode) < 0)
+    if (fchmod(fd, mode) < 0)
     {
       log_perr(LOG_ERR, "Unable to change swap directory permissions", errno);
       return false;
@@ -205,7 +250,7 @@ bool swapdir_config(void) {
   if (err != 0)
   {
     // Don't worry about attributes if they're not supported
-    if(errno != ENOTSUP)
+    if(errno != ENOTSUP && errno != ENOTTY)
     {
       log_perr(LOG_NOTICE, "Unable to get swap path attributes, "
 			"may not be able to create swap files", errno);
@@ -223,7 +268,7 @@ bool swapdir_config(void) {
     }
     attr &= ~FS_COMPR_FL;
     err = ioctl(fd, FS_IOC_SETFLAGS, &attr);
-    if (err != 0 && errno != ENOTSUP)
+    if (err != 0 && errno != ENOTSUP && errno != ENOTTY)
     {
       log_perr(LOG_NOTICE, "Unable to unset compression, "
 			  "may not be able to create swap files", errno);
@@ -239,7 +284,7 @@ bool swapdir_config(void) {
     }
     attr |= FS_NOCOW_FL;
     err = ioctl(fd, FS_IOC_SETFLAGS, &attr);
-    if (err != 0 && errno != ENOTSUP)
+    if (err != 0 && errno != ENOTSUP && errno != ENOTTY)
     {
       log_perr(LOG_NOTICE, "Unable to set NOCOW, "
 			  "may not be able to create swap files", errno);
@@ -373,7 +418,10 @@ memsize_t swapfs_size(void)
  */
 static bool enable_swapfile(const char file[], int *fault)
 {
-  runcommand("mkswap", file);
+  const int mkstatus = runcommand("mkswap", file);
+  if (unlikely(mkstatus != 0))
+    logm(LOG_WARNING, "mkswap failed for '%s' (status %d)", file, mkstatus);
+
   if (unlikely(swapon(file, 0) != 0))
   {
     const int err = errno;
@@ -991,6 +1039,8 @@ bool alloc_swapfile(memsize_t size)
     }
   }
 
+  swapfiles[newswap].created = runclock;
+  swapfiles[newswap].used = 0;
   sequence_number = inc_swapno(sequence_number);
 
   return true;

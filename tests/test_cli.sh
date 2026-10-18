@@ -45,6 +45,14 @@ if "$BIN" -i -c "$TMP/unknown.conf" >/dev/null 2>&1; then
   fail "unknown configuration item accepted"
 fi
 
+cat >"$TMP/overflow.conf" <<EOF
+max_swapsize = 99999999999999999999
+EOF
+
+if "$BIN" -i -c "$TMP/overflow.conf" >/dev/null 2>&1; then
+  fail "out-of-range numeric option accepted"
+fi
+
 cat >"$TMP/syntax.conf" <<EOF
 this is not valid
 EOF

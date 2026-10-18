@@ -24,6 +24,7 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA
 #include <assert.h>
 #include <ctype.h>
 #include <errno.h>
+#include <limits.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -300,25 +301,40 @@ static bool handle_configitem(const char keyword[], const char *value)
     else
     {
       char *endptr;
+      errno = 0;
       numarg = strtoll(value, &endptr, 0);
+      if (errno == ERANGE) err = "numeric argument out of range";
 
-      if (*endptr) switch (tolower(*endptr++))
+      if (!err && *endptr)
       {
-      case 'k': numarg *= KILO; break;
-      case 'm': numarg *= MEGA; break;
-      case 'g': numarg *= GIGA; break;
-      case 't': numarg *= TERA; break;
-      default: err = "invalid unit letter";
+	long long multiplier = 0;
+	switch (tolower((unsigned char)*endptr++))
+	{
+	case 'k': multiplier = KILO; break;
+	case 'm': multiplier = MEGA; break;
+	case 'g': multiplier = GIGA; break;
+	case 't': multiplier = TERA; break;
+	default: err = "invalid unit letter"; break;
+	}
+
+	if (!err)
+	{
+	  if (numarg > LLONG_MAX / multiplier ||
+	      numarg < LLONG_MIN / multiplier)
+	    err = "numeric argument out of range";
+	  else
+	    numarg *= multiplier;
+	}
       }
 
-      if (*endptr) err = "invalid numeric argument";
-      else if (numarg < opt->min) switch (opt->min)
+      if (!err && *endptr) err = "invalid numeric argument";
+      else if (!err && numarg < opt->min) switch (opt->min)
       {
       case 0:	err = "argument may not be negative";		break;
       case 1:	err = "argument must be greater than zero";	break;
       default:	err = "given value too small";			break;
       }
-      else if (numarg > opt->max) err = "given value too large";
+      else if (!err && numarg > opt->max) err = "given value too large";
     }
     break;
   case at_str:

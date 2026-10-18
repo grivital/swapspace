@@ -25,6 +25,8 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA
 #include <stdio.h>
 #include <stdlib.h>
 
+#include <sys/wait.h>
+
 #include "log.h"
 #include "main.h"
 #include "support.h"
@@ -60,7 +62,10 @@ int runcommandformat(const char format[], const char cmd[], const char arg[])
     logm(LOG_DEBUG, "Running: (%s)", localbuf);
   }
 #endif
-  return system(localbuf);
+  const int status = system(localbuf);
+  if (status == -1) return -1;
+  if (WIFEXITED(status)) return WEXITSTATUS(status);
+  return -1;
 }
 
 int runcommand(const char cmd[], const char arg[])

@@ -51,7 +51,7 @@ char localbuf[16384];
 time_t runclock = 0;
 
 /// Have we received a kill/HUP/power signal?
-static volatile bool stop = false;
+static volatile sig_atomic_t stop = 0;
 
 static char pidfile[PATH_MAX] = "/var/run/swapspace.pid";
 static bool make_pidfile = false;
@@ -138,16 +138,14 @@ static bool startpidfile(void)
 {
   assert(pidfd == -1);
   if (!make_pidfile) return true;
-  pidfd = open(pidfile, O_WRONLY|O_CREAT|O_EXCL|O_CLOEXEC,
+  /* The swap directory lock guarantees that no other instance is running, so
+   * a leftover pidfile can safely be overwritten.
+   */
+  pidfd = open(pidfile, O_WRONLY|O_CREAT|O_TRUNC|O_CLOEXEC,
       S_IRUSR|S_IWUSR|S_IRGRP|S_IROTH);
   if (unlikely(pidfd == -1))
   {
-    if (errno == EEXIST)
-      logm(LOG_ERR,
-	  "Daemon already running, or leftover pidfile: '%s'",
-	  pidfile);
-    else
-      log_perr_str(LOG_ERR, "Could not create pidfile", pidfile, errno);
+    log_perr_str(LOG_ERR, "Could not create pidfile", pidfile, errno);
     return false;
   }
   
@@ -192,10 +190,10 @@ static pid_t daemonize(void)
 
 
 /// Was a dump of statistics requested?
-static volatile bool print_status=false;
+static volatile sig_atomic_t print_status = 0;
 
 /// Was an immediate adjustment requested?
-static volatile bool adjust_swap=false;
+static volatile sig_atomic_t adjust_swap = 0;
 
 
 /// Signal handler that requests generation of a status report to stdout
@@ -232,10 +230,10 @@ static void install_sigs(void)
   // Install exit handler.  These may not be repeatable, i.e. if the same signal
   // comes in again, we will probably just be terminated.  But that's not
   // unreasonable, come to think of it.
-  signal(SIGTERM, sighand_exit);
-  signal(SIGHUP, sighand_exit);
+  install_sighandler(SIGTERM, sighand_exit);
+  install_sighandler(SIGHUP, sighand_exit);
 #ifdef SIGPWR
-  signal(SIGPWR, sighand_exit);
+  install_sighandler(SIGPWR, sighand_exit);
 #endif
 
   // These handlers must be repeatable.
