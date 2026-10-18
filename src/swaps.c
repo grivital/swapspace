@@ -991,6 +991,13 @@ bool alloc_swapfile(memsize_t size)
    */
   if (unlikely(size < min_swapsize)) size = min_swapsize;
 
+  /* Cap the request before checking free disk space: the ideal request can
+   * easily exceed max_swapsize, and make_swapfile() would cap it anyway.
+   * Checking the uncapped size would refuse to allocate anything at all when
+   * the filesystem is smaller than the ideal request.
+   */
+  if (unlikely(size > max_swapsize)) size = max_swapsize;
+
   const int newswap = find_free(sequence_number);
   if (unlikely(swapfiles[newswap].size))
   {
