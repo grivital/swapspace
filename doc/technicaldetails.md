@@ -41,3 +41,20 @@ State information can be queried by sending the program the SIGUSR1 signal (see
 log debug information to the system's daemon log and/or standard output, as
 appropriate.  The program can also be made to log state transitions by starting
 it with the -v or --verbose option.
+
+External signals
+----------------
+
+Two further inputs refine the policy when the kernel provides them.  Pressure
+Stall Information (`/proc/pressure/memory`, Linux 4.20 and later) tells us
+whether tasks are actually stalling.  When the "some avg10" value exceeds
+`psi_threshold` (10% by default, 0 disables), swapspace steers towards
+`freetarget` even before `lower_freelimit` is reached, and it does not
+deallocate swap while pressure persists.
+
+In containers, `/proc/meminfo` describes the host rather than the container.
+When the process's cgroup exposes a numeric memory limit (v2 `memory.max`, or
+v1 `memory.limit_in_bytes`), that limit replaces `MemTotal`, free space is
+derived from the cgroup's current usage, and the cgroup's own swap accounting
+is used where available.  The percentage thresholds then apply to the
+cgroup's budget instead of the host's.
