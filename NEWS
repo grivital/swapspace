@@ -1,5 +1,8 @@
-v1.18.2
-=======
+v1.19
+=====
++ Use PSI memory pressure (--psi_threshold) when available
++ Respect cgroup v2 and v1 memory limits
++ Lock the swap directory to prevent concurrent instances
 + Fix --enable-noconfig and --enable-nodebug builds
 + Fix buffer overruns in configuration and /proc parsing
 + Make --paranoid actually overwrite retired swapfiles
