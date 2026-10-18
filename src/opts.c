@@ -461,7 +461,9 @@ bool configure(int argc, char *argv[])
 {
 #ifndef NO_CONFIG
 
+#ifndef NO_DEBUG
   assert(options_okay());
+#endif
 
   /* I'm not too proud of this.  Read command line first, because it may change
    * where the configuration file is.  Then read the configuration file, and
@@ -499,13 +501,18 @@ bool configure(int argc, char *argv[])
 
 #endif
 
+#ifndef NO_CONFIG
   if (!main_check_config() ||
       !memory_check_config() ||
-      !swaps_check_config() ||
-      !swapfs_large_enough())
+      !swaps_check_config())
     return false;
+#endif
 
+  if (!swapfs_large_enough()) return false;
+
+#ifndef NO_CONFIG
   if (inspect) exit(EXIT_SUCCESS);
+#endif
 
   return to_swapdir();
 }

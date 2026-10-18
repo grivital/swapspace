@@ -50,8 +50,9 @@ AC_ARG_ENABLE([noconfig],[
 		)],
 		[
 		AC_DEFINE([NO_CONFIG],[],[Ultra-lightweight unconfigurable version])
+		no_config=yes
 		],
-		[])
+		[no_config=no])
 
 AC_ARG_ENABLE([nodebug],[
 		AS_HELP_STRING([--enable-nodebug],
@@ -59,8 +60,11 @@ AC_ARG_ENABLE([nodebug],[
 		)],
 		[
 		AC_DEFINE([NO_DEBUG],[],[Disable assertions and consistancy checking])
+		AC_DEFINE([NDEBUG],[],[Define to disable assert()])
 		],
 		[])
+
+AM_CONDITIONAL([NO_CONFIG], [test "x$no_config" = "xyes"])
 
 AC_CONFIG_FILES([Makefile
                  src/Makefile])

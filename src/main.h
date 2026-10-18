@@ -52,14 +52,14 @@ extern time_t runclock;
  */
 bool swapfs_large_enough(void);
 
-#ifndef NO_CONFIG
 /// Suppress informational output and warnings?
+/** Always false in the unconfigurable build. */
 extern bool quiet;
 /// Print debug output when changing state and such?
+/** Always false in the unconfigurable build. */
 extern bool verbose;
-/// Use file zeroing or posix_fallocate?
-extern bool zero;
 
+#ifndef NO_CONFIG
 char *set_quiet(long long dummy);
 char *set_verbose(long long dummy);
 

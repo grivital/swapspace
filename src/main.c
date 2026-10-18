@@ -64,6 +64,9 @@ char *set_pidfile(long long dummy)
   return pidfile;
 }
 
+bool quiet = false;
+bool verbose = false;
+
 #ifndef NO_CONFIG
 static bool godaemon = false;
 
@@ -72,9 +75,6 @@ char *set_daemon(long long dummy)
   godaemon = true;
   return NULL;
 }
-
-bool quiet = false;
-bool verbose = false;
 
 char *set_quiet(long long dummy)
 {

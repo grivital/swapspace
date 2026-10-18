@@ -54,10 +54,12 @@ int runcommandformat(const char format[], const char cmd[], const char arg[])
     errno = E2BIG;
     return -1;
   }
+#ifndef NO_CONFIG
   if (verbose)
   {
     logm(LOG_DEBUG, "Running: (%s)", localbuf);
   }
+#endif
   return system(localbuf);
 }
 
