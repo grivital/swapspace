@@ -30,3 +30,13 @@ Use `blkid` to check which partition is which.
 2. ext4
 3. xfs
 4. f2fs
+
+### Automated root test
+
+`tests/root-integration.sh` runs the create/activate/retire cycle on real
+filesystems.  It is destructive and refuses to run unless
+`SWAPSPACE_VM_TEST=1` is set, so use it only inside a disposable VM:
+
+    SWAPSPACE_VM_TEST=1 ./tests/root-integration.sh /mnt/ext4 /mnt/xfs ...
+
+Pass one directory per mounted test filesystem.

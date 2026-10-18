@@ -20,4 +20,4 @@ else
 TESTS = test_calc test_cli.sh
 endif
 
-EXTRA_DIST = test_cli.sh
+EXTRA_DIST = test_cli.sh root-integration.sh
