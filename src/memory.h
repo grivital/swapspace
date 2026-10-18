@@ -22,6 +22,8 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA
 #ifndef SWAPSPACE_MEMORY_H
 #define SWAPSPACE_MEMORY_H
 
+#include <limits.h>
+
 #include "main.h"
 
 /// Type used for swap sizes and such.  Must be signed.

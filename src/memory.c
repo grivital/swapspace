@@ -219,7 +219,8 @@ struct memstate
 };
 
 
-void imbibe_meminfo_entry(const struct meminfo_item *inf, struct memstate *st)
+static void imbibe_meminfo_entry(const struct meminfo_item *inf,
+    struct memstate *st)
 {
   switch (inf->entry[0])
   {
@@ -274,7 +275,7 @@ static bool read_proc_meminfo(struct memstate *s)
   fclose(fp);
   if (unlikely(inf.entry[0]))
   {
-    log_perr(LOG_ERR, inf.entry, inf.value);
+    log_perr(LOG_ERR, inf.entry, (int)inf.value);
     return false;
   }
 
@@ -373,7 +374,8 @@ static inline memsize_t space_total(const struct memstate *st)
 static inline int pct_free(const struct memstate *st)
 {
   // Phrased oddly to avoid integer overflows
-  return space_free(st)/(space_total(st)/100);
+  const memsize_t hundredth = space_total(st)/100;
+  return hundredth ? (int)(space_free(st)/hundredth) : 0;
 }
 
 

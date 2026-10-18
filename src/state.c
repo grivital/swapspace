@@ -108,9 +108,20 @@ void handle_requirements(void)
   }
 
   const memsize_t reqbytes = memory_target();
+  if (unlikely(reqbytes == MEMSIZE_ERROR))
+  {
+    /* Could not read memory status.  Keep the current state and try again next
+     * iteration; in particular, do not treat the error sentinel as a huge
+     * request to free swap space.
+     */
+#ifndef NO_CONFIG
+    if (verbose) logm(LOG_WARNING, "Could not read memory status; retrying");
+#endif
+    return;
+  }
 #ifndef NO_CONFIG
   if (verbose && reqbytes != oldreqbytes)
-	  logm(LOG_DEBUG,"Required Bytes: %d", reqbytes);
+	  logm(LOG_DEBUG,"Required Bytes: %lld", (long long)reqbytes);
 #endif
   timer_tick();
 

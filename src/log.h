@@ -33,6 +33,9 @@ void log_start(const char myname[]);
 void log_close();
 
 /// Log formatted message to log, or stdout/sterr as appropriate
+#if defined(__GNUC__)
+__attribute__((format(printf, 2, 3)))
+#endif
 void logm(int priority, const char fmt[], ...);
 
 /// Log message with given errno (or ignore error number if it is zero)
