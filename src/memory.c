@@ -226,6 +226,8 @@ struct memstate
 	    SwapTotal,
 	    SwapFree,
 	    Shmem;
+  /// Are MemTotal/MemFree/MemAvailable derived from a cgroup limit?
+  bool cgroup_limited;
 };
 
 
@@ -287,6 +289,156 @@ int fuzz_meminfo_line(const uint8_t data[], size_t size)
 #endif
 
 
+/// Join a cgroup directory and a control-file name
+static bool join_path(char out[], size_t size,
+    const char dir[], const char name[])
+{
+  const int len = snprintf(out, size, "%s/%s", dir, name);
+  return len >= 0 && (size_t)len < size;
+}
+
+
+/// Read a value from a cgroup control file
+/** Returns false for missing files, "max", and cgroup v1's "unlimited"
+ * sentinel, which is a page-aligned value close to LLONG_MAX.
+ */
+static bool read_cgroup_value(const char path[], memsize_t *value)
+{
+  char buf[64];
+  FILE *fp = fopen(path, "r");
+  if (unlikely(!fp)) return false;
+
+  const bool ok = (fgets(buf, sizeof(buf), fp) != NULL) &&
+		  parse_cgroup_limit(buf, value);
+  fclose(fp);
+
+  return ok && *value < LLONG_MAX/2;
+}
+
+
+/// Locate this process's memory cgroup directory
+/** @param version receives 2 for cgroup v2, or 1 for v1 */
+static bool cgroup_dir(char base[], size_t size, int *version)
+{
+  FILE *fp = fopen("/proc/self/cgroup", "r");
+  if (unlikely(!fp)) return false;
+
+  bool found = false;
+  while (fgets(localbuf, sizeof(localbuf), fp))
+  {
+    // cgroup v2: "0::/path"
+    if (strncmp(localbuf, "0::", 3) == 0)
+    {
+      char *path = localbuf + 3;
+      path[strcspn(path, "\n")] = '\0';
+      if (path[0] == '/' && path[1] == '\0') path[0] = '\0';
+      const int len = snprintf(base, size, "/sys/fs/cgroup%s", path);
+      if (len >= 0 && (size_t)len < size)
+      {
+	*version = 2;
+	found = true;
+      }
+      break;
+    }
+
+    // cgroup v1: "N:memory:/path" (the controller list may be comma-separated)
+    char *first = strchr(localbuf, ':');
+    if (!first) continue;
+    char *second = strchr(first + 1, ':');
+    if (!second) continue;
+    *second = '\0';
+    if (!strstr(first + 1, "memory")) continue;
+
+    char *path = second + 1;
+    path[strcspn(path, "\n")] = '\0';
+    if (path[0] == '/' && path[1] == '\0') path[0] = '\0';
+    const int len = snprintf(base, size, "/sys/fs/cgroup/memory%s", path);
+    if (len >= 0 && (size_t)len < size)
+    {
+      *version = 1;
+      found = true;
+    }
+    break;
+  }
+
+  fclose(fp);
+  return found;
+}
+
+
+/// Prefer cgroup limits over host-wide /proc/meminfo figures
+/** Containers see the host's memory in /proc/meminfo, which makes swapspace
+ * overestimate how much swap is reasonable.  When a cgroup memory limit is in
+ * effect, use it as the total and derive free space from memory.current.
+ */
+static void apply_cgroup_limits(struct memstate *s)
+{
+  char dir[PATH_MAX];
+  int version = 0;
+  if (!cgroup_dir(dir, sizeof(dir), &version)) return;
+
+  char path[PATH_MAX];
+  memsize_t limit, current;
+  const char *limitname =
+    (version == 2) ? "memory.max" : "memory.limit_in_bytes";
+  const char *currentname =
+    (version == 2) ? "memory.current" : "memory.usage_in_bytes";
+
+  if (!join_path(path, sizeof(path), dir, limitname) ||
+      !read_cgroup_value(path, &limit))
+    return;
+  if (!join_path(path, sizeof(path), dir, currentname) ||
+      !read_cgroup_value(path, &current))
+    return;
+
+  // Ignore limits that do not actually constrain us.
+  if (limit == 0 || limit >= s->MemTotal) return;
+
+  s->MemTotal = limit;
+  s->MemFree = (current < limit) ? limit - current : 0;
+  s->MemAvailable = s->MemFree;
+  s->cgroup_limited = true;
+
+  /* Host-wide cache and buffer figures do not describe this cgroup.  They are
+   * not used by space_free() once cgroup_limited is set, but leaving them in
+   * place would make diagnostics misleading.
+   */
+  s->Cached = s->Buffers = s->Dirty = s->Writeback = 0;
+  s->Shmem = s->SwapCached = 0;
+
+  // Use the cgroup's own swap accounting where available.  Otherwise keep the
+  // host-wide swap figures from /proc/meminfo.
+  if (version == 2)
+  {
+    memsize_t swaplimit, swapcurrent;
+    if (join_path(path, sizeof(path), dir, "memory.swap.max") &&
+	read_cgroup_value(path, &swaplimit) &&
+	join_path(path, sizeof(path), dir, "memory.swap.current") &&
+	read_cgroup_value(path, &swapcurrent))
+    {
+      s->SwapTotal = swaplimit;
+      s->SwapFree = (swapcurrent < swaplimit) ? swaplimit - swapcurrent : 0;
+    }
+  }
+  else
+  {
+    // cgroup v1 accounts memory and swap together in memsw.
+    memsize_t memswlimit, memswcurrent;
+    if (join_path(path, sizeof(path), dir, "memory.memsw.limit_in_bytes") &&
+	read_cgroup_value(path, &memswlimit) &&
+	join_path(path, sizeof(path), dir, "memory.memsw.usage_in_bytes") &&
+	read_cgroup_value(path, &memswcurrent) &&
+	memswlimit > limit)
+    {
+      s->SwapTotal = memswlimit - limit;
+      const memsize_t swapused =
+	(memswcurrent > current) ? memswcurrent - current : 0;
+      s->SwapFree = (swapused < s->SwapTotal) ? s->SwapTotal - swapused : 0;
+    }
+  }
+}
+
+
 static bool read_proc_meminfo(struct memstate *s)
 {
   FILE *fp = fopen("/proc/meminfo", "r");
@@ -316,6 +468,8 @@ static bool read_proc_meminfo(struct memstate *s)
     logm(LOG_ERR, "Memory statistics read from /proc/meminfo don't add up");
     return false;
   }
+
+  apply_cgroup_limits(s);
 
   return true;
 }
@@ -381,7 +535,7 @@ static inline memsize_t space_free(const struct memstate *st)
    * Pressure") which says how much of the non-dirty part of Cache should be
    * considered in-use.
    */
-  if (kernel_mem_available) {
+  if (st->cgroup_limited || kernel_mem_available) {
     return st->MemAvailable + st->SwapFree;
   } else {
     return st->MemFree +
@@ -438,7 +592,7 @@ memsize_t memory_target(void)
 
   assert(upper_freelimit > lower_freelimit);
 
-  struct memstate st = { 0, 0, 0, 0, 0, 0, 0, 0 };
+  struct memstate st = { 0 };
   if (unlikely(!read_proc_meminfo(&st))) return MEMSIZE_ERROR;
 
   const int freepct = pct_free(&st);
@@ -467,7 +621,7 @@ memsize_t memory_target(void)
 
 memsize_t minimal_swapfile(void)
 {
-  struct memstate st = { 0, 0, 0, 0, 0, 0, 0, 0 };
+  struct memstate st = { 0 };
   if (unlikely(!read_proc_meminfo(&st))) return MEMSIZE_ERROR;
 
   const memsize_t total = space_total(&st);
@@ -492,9 +646,12 @@ static void dump_memline(const char category[],
 
 void dump_memory(void)
 {
-  struct memstate st = { 0, 0, 0, 0, 0, 0, 0, 0 };
+  struct memstate st = { 0 };
   if (unlikely(!read_proc_meminfo(&st))) return;
   check_memory_status();
+
+  if (st.cgroup_limited)
+    logm(LOG_INFO, "cgroup memory limit in effect");
 
   dump_memline("core", st.MemTotal, st.MemFree, st.Cached);
   dump_memline("swap", st.SwapTotal, st.SwapFree, st.SwapCached);

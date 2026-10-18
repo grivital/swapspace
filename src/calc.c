@@ -96,6 +96,34 @@ memsize_t ideal_swapsize(memsize_t totalspace, memsize_t freespace,
 }
 
 
+bool parse_cgroup_limit(const char text[], memsize_t *limit)
+{
+  if (!text || !limit) return false;
+
+  const char *p = text;
+  while (isspace((unsigned char)*p)) ++p;
+
+  // cgroup v2 uses the literal string "max" for "no limit".
+  if (strncmp(p, "max", 3) == 0)
+  {
+    const char *q = p + 3;
+    while (isspace((unsigned char)*q)) ++q;
+    if (!*q) return false;
+  }
+
+  char *endptr;
+  errno = 0;
+  const long long value = strtoll(p, &endptr, 10);
+  if (errno == ERANGE || endptr == p || value < 0) return false;
+
+  while (isspace((unsigned char)*endptr)) ++endptr;
+  if (*endptr) return false;
+
+  *limit = value;
+  return true;
+}
+
+
 bool parse_psi_line(const char line[], int *percent)
 {
   if (!line || !percent) return false;

@@ -69,6 +69,18 @@ int main(void)
   CHECK(parse_psi_line("some avg10=150.0", &psi));
   CHECK(psi == 100);
 
+  // cgroup limit parsing.
+  memsize_t cg = 0;
+  CHECK(!parse_cgroup_limit("max\n", &cg));
+  CHECK(parse_cgroup_limit("123456\n", &cg) && cg == 123456);
+  CHECK(parse_cgroup_limit("  4096  \n", &cg) && cg == 4096);
+  CHECK(!parse_cgroup_limit("-1\n", &cg));
+  CHECK(!parse_cgroup_limit("12x\n", &cg));
+  CHECK(!parse_cgroup_limit("", &cg));
+  // cgroup v1's "unlimited" sentinel is still a valid number; memory.c filters
+  // values near LLONG_MAX.
+  CHECK(parse_cgroup_limit("9223372036854771712\n", &cg));
+
   if (failures) fprintf(stderr, "%d check(s) failed\n", failures);
   return failures ? 1 : 0;
 }
