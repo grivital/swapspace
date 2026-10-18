@@ -1,0 +1,59 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  build:
+    name: build (${{ matrix.cc }}, ${{ matrix.configure || 'default' }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        cc: [gcc, clang]
+        configure: ["", "--enable-noconfig", "--enable-nodebug"]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install build dependencies
+        run: sudo apt-get update && sudo apt-get install -y autoconf automake
+      - name: Generate configure
+        run: autoreconf -i
+      - name: Configure, build and test
+        run: |
+          mkdir build
+          cd build
+          CC=${{ matrix.cc }} ../configure ${{ matrix.configure }} \
+            CFLAGS="-O2 -g -Wall -Wextra -Wformat=2"
+          make
+          make check
+
+  sanitizers:
+    name: sanitizers (clang)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install build dependencies
+        run: sudo apt-get update && sudo apt-get install -y autoconf automake clang
+      - name: Generate configure
+        run: autoreconf -i
+      - name: Build and test with ASan/UBSan
+        run: |
+          mkdir build
+          cd build
+          CC=clang ../configure \
+            CFLAGS="-O1 -g -fsanitize=address,undefined -fno-omit-frame-pointer" \
+            LDFLAGS="-fsanitize=address,undefined"
+          make
+          make check
+
+  distcheck:
+    name: distcheck
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install build dependencies
+        run: sudo apt-get update && sudo apt-get install -y autoconf automake
+      - name: Generate configure
+        run: autoreconf -i
+      - run: ./configure && make distcheck

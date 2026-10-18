@@ -12,3 +12,6 @@ swapspace
 swapspace-*
 *.m4
 *.o
+tests/test_calc
+tests/*.log
+tests/*.trs

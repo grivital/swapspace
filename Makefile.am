@@ -1,4 +1,4 @@
-SUBDIRS = src
+SUBDIRS = src tests
 sysconf_DATA = swapspace.conf
 EXTRA_DIST = swapspace.conf swapspace.lsbinit swapspace.service doc
 

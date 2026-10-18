@@ -67,5 +67,6 @@ AC_ARG_ENABLE([nodebug],[
 AM_CONDITIONAL([NO_CONFIG], [test "x$no_config" = "xyes"])
 
 AC_CONFIG_FILES([Makefile
-                 src/Makefile])
+                 src/Makefile
+                 tests/Makefile])
 AC_OUTPUT
