@@ -66,6 +66,25 @@ AC_ARG_ENABLE([nodebug],[
 
 AM_CONDITIONAL([NO_CONFIG], [test "x$no_config" = "xyes"])
 
+AC_ARG_ENABLE([fuzzing],[
+		AS_HELP_STRING([--enable-fuzzing],
+		[Build libFuzzer harnesses (requires clang)]
+		)],
+		[fuzzing=yes],
+		[fuzzing=no])
+
+AM_CONDITIONAL([FUZZING], [test "x$fuzzing" = "xyes"])
+
+if test "x$fuzzing" = "xyes"; then
+	case "$CC" in
+	*clang*) ;;
+	*) AC_MSG_ERROR([--enable-fuzzing requires clang]) ;;
+	esac
+	CPPFLAGS="$CPPFLAGS -DFUZZING"
+	CFLAGS="$CFLAGS -fsanitize=fuzzer-no-link,address -fno-omit-frame-pointer"
+	LDFLAGS="$LDFLAGS -fsanitize=address"
+fi
+
 AC_CONFIG_FILES([Makefile
                  src/Makefile
                  tests/Makefile])

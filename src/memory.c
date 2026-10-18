@@ -262,6 +262,22 @@ static void imbibe_meminfo_entry(const struct meminfo_item *inf,
 }
 
 
+#ifdef FUZZING
+int fuzz_meminfo_line(const uint8_t data[], size_t size)
+{
+  FILE *fp = fmemopen((void *)data, size, "r");
+  if (unlikely(!fp)) return 0;
+
+  struct memstate st = { 0 };
+  struct meminfo_item inf;
+  while (read_meminfo_item(fp, &inf)) imbibe_meminfo_entry(&inf, &st);
+  fclose(fp);
+
+  return 0;
+}
+#endif
+
+
 static bool read_proc_meminfo(struct memstate *s)
 {
   FILE *fp = fopen("/proc/meminfo", "r");

@@ -74,5 +74,13 @@ char *set_cache_elasticity(long long pct);
 bool memory_check_config(void);
 #endif
 
+#ifdef FUZZING
+#include <stddef.h>
+#include <stdint.h>
+
+/// Feed arbitrary bytes to the /proc/meminfo line parser (libFuzzer harness)
+int fuzz_meminfo_line(const uint8_t data[], size_t size);
+#endif
+
 #endif
 

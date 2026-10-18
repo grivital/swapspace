@@ -12,6 +12,8 @@ swapspace
 swapspace-*
 *.m4
 *.o
+test-driver
 tests/test_calc
+tests/fuzz_meminfo
 tests/*.log
 tests/*.trs

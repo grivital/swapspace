@@ -47,6 +47,28 @@ jobs:
           make
           make check
 
+  fuzz:
+    name: fuzz (clang)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install build dependencies
+        run: sudo apt-get update && sudo apt-get install -y autoconf automake clang
+      - name: Generate configure
+        run: autoreconf -i
+      - name: Build with fuzzing enabled
+        run: |
+          mkdir build
+          cd build
+          CC=clang ../configure --enable-fuzzing
+          make
+          make check
+      - name: Fuzz the /proc/meminfo parser
+        run: |
+          mkdir -p corpus
+          printf 'MemTotal: 16384 kB\nMemFree: 8192 kB\n' > corpus/seed
+          ./tests/fuzz_meminfo -max_total_time=30 -timeout=5 corpus
+
   distcheck:
     name: distcheck
     runs-on: ubuntu-latest
