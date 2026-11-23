@@ -32,6 +32,7 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA
 
 #include <sys/param.h>
 
+#include "crypt.h"
 #include "memory.h"
 #include "opts.h"
 #include "support.h"
@@ -94,6 +95,13 @@ static const struct option options[] =
   "Use configuration file s" },
   { "cooldown",		'a', at_num,  0, LONG_MAX, set_cooldown,
   "Give allocation attempts n seconds to settle" },
+  { "crypt",		'E', at_none, 0, 0, set_crypt,
+  "Encrypt swapfiles with a random key held only by the kernel" },
+  { "crypt_cipher",	'X', at_str,  1, CRYPT_CIPHER_MAX, set_crypt_cipher,
+  "Use dm-crypt cipher s, e.g. aes-xts-plain64" },
+  { "crypt_keysize",	'K', at_num,  CRYPT_KEYSIZE_MIN, CRYPT_KEYSIZE_MAX,
+  set_crypt_keysize,
+  "Use an n-bit encryption key (xts needs 256 or 512)" },
   { "daemon",		'd', at_none, 0, 0, set_daemon,
   "Run quietly in background" },
   { "erase",		'e', at_none, 0, 0, set_erase,
@@ -524,7 +532,8 @@ bool configure(int argc, char *argv[])
 #ifndef NO_CONFIG
   if (!main_check_config() ||
       !memory_check_config() ||
-      !swaps_check_config())
+      !swaps_check_config() ||
+      !crypt_check_config())
     return false;
 #endif
 

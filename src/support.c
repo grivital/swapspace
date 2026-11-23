@@ -48,6 +48,21 @@ int swapoff(const char path[])
 #endif
 
 
+int runcommandline(const char line[])
+{
+#ifndef NO_CONFIG
+  if (verbose)
+  {
+    logm(LOG_DEBUG, "Running: (%s)", line);
+  }
+#endif
+  const int status = system(line);
+  if (status == -1) return -1;
+  if (WIFEXITED(status)) return WEXITSTATUS(status);
+  return -1;
+}
+
+
 int runcommandformat(const char format[], const char cmd[], const char arg[])
 {
   const size_t bufsz = sizeof(localbuf);
@@ -56,16 +71,7 @@ int runcommandformat(const char format[], const char cmd[], const char arg[])
     errno = E2BIG;
     return -1;
   }
-#ifndef NO_CONFIG
-  if (verbose)
-  {
-    logm(LOG_DEBUG, "Running: (%s)", localbuf);
-  }
-#endif
-  const int status = system(localbuf);
-  if (status == -1) return -1;
-  if (WIFEXITED(status)) return WEXITSTATUS(status);
-  return -1;
+  return runcommandline(localbuf);
 }
 
 int runcommand(const char cmd[], const char arg[])

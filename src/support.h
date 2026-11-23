@@ -36,6 +36,13 @@ int swapon(const char path[], int flags);
 int swapoff(const char path[]);
 #endif
 
+/// Run a complete shell command line.  The caller must have quoted it safely.
+/** The line may be stored in localbuf, which this function does not modify.
+ * @return -1 on failure to execute (check errno), or the command's return
+ * value.
+ */
+int runcommandline(const char line[]);
+
 /// Run given shell command with given argument.  Clobbers localbuf.
 /** A convenient front-end for system(), this composes a command line consisting
  * of a command followed by a single argument (which will be quoted).

@@ -75,6 +75,36 @@ Run quietly in the background.  This is the normal way to run the program.
 Attempt to free up all allocated swap files.  Returns 0 if all files were
 successfully erased, or 1 otherwise.
 .TP
+\fB\-E\fR, \fB\-\-crypt\fR
+Encrypt swapfiles.  Each new swapfile is attached to a loop device and mapped
+through dm-crypt (plain mode) with a random key read from \fI/dev/urandom\fR,
+and swap is made on and enabled from the mapped device
+\fI/dev/mapper/swapspace\-N\fR instead of from the file.  The key exists only in
+the kernel and is gone when the mapping is removed.  Off by default.  If any
+step fails, nothing is enabled and the file is deleted (kept only if a mapping
+that still holds it cannot be removed, until it can be): a swapfile is never
+activated unencrypted while this option is on.  See \fBENCRYPTED SWAPFILES\fR
+for what this does and does not protect, and its requirements.
+.TP
+\fB\-K\fR \fIbits\fR, \fB\-\-crypt_keysize\fR=\fIbits\fR
+Key size in bits for \fB\-\-crypt\fR; default 512, range 128 to 1024, a multiple
+of 8.  XTS ciphers (the default) split the key in two and need 256 or 512;
+AES in other modes (including a bare \fIaes\fR) takes 128, 192 or 256.  Those
+sizes are checked at startup.  For any other cipher only the range is checked:
+cryptsetup or the kernel refuses an unsuitable size when the first mapping is
+created, and then nothing is enabled.
+.TP
+\fB\-X\fR \fIcipher\fR, \fB\-\-crypt_cipher\fR=\fIcipher\fR
+Cipher specification for \fB\-\-crypt\fR, in cryptsetup's notation; default
+\fIaes\-xts\-plain64\fR.  Because it is passed to a shell command line it may
+contain only letters, digits and the characters ":_.\-", and must start with a
+letter or digit; anything else is rejected at startup.  Ciphers that give no
+confidentiality are rejected too: any name containing \fInull\fR
+(\fIcipher_null\fR stores plaintext) and the \fIecb\fR chain mode, which
+leaves repeated blocks recognizable and so would show structure in swapped-out
+memory.  Apart from that this only validates the spelling: the kernel decides
+whether the cipher exists.
+.TP
 \fB\-f\fR \fIp\fR, \fB\-\-freetarget\fR=\fIp\fR
 Aim to have \fIp\fR% of combined memory and swap space free.
 .TP
@@ -152,6 +182,86 @@ program you would run on a hard-realtime system.
 Any messages are sent to the system daemon log; it is also printed to the
 standard output/error streams (as appropriate based on the urgency of each
 individual message) if available.
+.SH ENCRYPTED SWAPFILES
+With \fB\-\-crypt\fR, swapfiles are created as usual (with the \fBNOCOW\fR
+attribute where supported), except that they are filled with zeros and flushed
+instead of being preallocated: unwritten extents would need block allocation on
+the first write, which is the wrong thing to need while swapping out.  They are
+then set up as follows: the file is
+attached to a free loop device with direct I/O, \fBcryptsetup open \-\-type
+plain\fR maps it as \fIswapspace\-N\fR using a random key, \fBmkswap\fR is run on
+\fI/dev/mapper/swapspace\-N\fR, and that device is enabled with \fBswapon\fR.
+Retiring a swapfile runs \fBswapoff\fR, \fBcryptsetup close\fR, detaches the
+loop device and deletes the file; \fB\-\-erase\fR and \fB\-\-paranoid\fR work
+as before.  Active mappings named \fIswapspace\-N\fR are recognized in
+\fI/proc/swaps\fR (as \fI/dev/mapper/swapspace\-N\fR or \fI/dev/dm\-X\fR) and
+adopted on startup whether or not \fB\-\-crypt\fR is given, so they are retired
+correctly after a configuration change.  A mapping is adopted only if the loop
+device under it is backed by file N of this swap directory, which is checked
+again on every read of \fI/proc/swaps\fR; one that is not (for example another
+instance's) is left alone and reported once.  Mappings that are not backed by a
+file of this directory are never closed, in any mode, and their slot numbers are
+not used.
+.PP
+After a reboot the key of an old file is gone, so inactive files found at
+startup cannot be reused in this mode.  They are deleted (overwritten first
+with \fB\-\-paranoid\fR, since an old plain file may hold readable data) and
+new ones are created when needed.  To switch from
+plain to encrypted swapfiles cleanly, run \fBswapspace \-\-erase\fR (with
+\fB\-\-paranoid\fR if you want the old data overwritten) with the old
+configuration first.  A mapping left over from an interrupted setup is removed
+at startup, or before its slot is used again.  Mapping names are global: run
+only one instance with \fB\-\-crypt\fR per host.
+.PP
+\fBWhat this protects:\fR the contents of the swapfiles as stored on disk.
+Someone who obtains the disk, a copy of it, or freed blocks of it cannot read
+swapped-out memory, because the key was never written anywhere.
+.PP
+\fBWhat it does not protect:\fR memory itself, including everything that is not
+swapped out; zram and zswap, which hold plaintext (or compressed plaintext) in
+RAM; hibernation images; other swap devices; the data of a running system
+against an attacker with root; or its integrity (this is encryption without
+authentication).  File names, sizes and timing are visible.  The key passes
+through the memory of the \fBcryptsetup\fR process once, when it is read from
+\fI/dev/urandom\fR.
+.PP
+\fBRequirements:\fR \fBcryptsetup\fR 2.0 or later in the \fBPATH\fR (the
+\fBopen\fR and \fBclose\fR subcommands, and \fB\-\-batch\-mode\fR), the loop and
+dm-crypt kernel modules, a kernel with the \fBLOOP_CONFIGURE\fR loop ioctl
+(Linux 5.8 or later, and kernel headers of that age when building), and a swap
+directory on a filesystem and device where direct I/O (\fBO_DIRECT\fR) works
+with the loop device's block size.  The block size is chosen for that: it is the
+file's direct I/O alignment (\fBSTATX_DIOALIGN\fR, else the filesystem block
+size), rounded up to a power of two, at least 512 bytes and at most the page
+size, so that 4Kn storage works.  (Swap does its I/O in pages and cannot use a
+device with larger logical blocks, so if a filesystem asked for more than that,
+setup fails with a message saying that the alignment exceeds the page size.)  On \fBbtrfs\fR the swap files must
+have \fBNOCOW\fR, or this mode refuses to create them: copy-on-write files get
+their direct writes bounced through newly allocated memory.  Mirrored data
+profiles (\fBDUP\fR, \fBRAID1\fR) can cause the same even with \fBNOCOW\fR;
+use the \fBsingle\fR data profile for the filesystem holding the swap
+directory.  Direct I/O is requested together with that
+block size when the loop device is configured.  If the kernel does not enable it
+(some filesystems cannot do direct I/O on files at all), setup fails with a
+message saying so, rather than falling back to buffered I/O.
+.PP
+\fBCost:\fR every swap access passes through the loop driver and dm-crypt, which
+costs CPU time and some kernel memory, and creating a swapfile takes a few extra
+commands and writes the whole file instead of preallocating it.
+.PP
+\fBCaveat:\fR this mode trades robustness under extreme memory pressure for
+encryption.  The loop driver does its I/O on a workqueue that is allocated
+without \fBWQ_MEM_RECLAIM\fR, so it has no rescuer thread: when memory is too
+short to start a worker, the writes that are supposed to free memory can wait
+for memory and deadlock.  The same workqueue is freezable, so swap-out to the
+device stalls while the system is suspending, until it resumes.  Direct I/O
+(always used here) removes the backing file's page cache from the path, and
+writing the file out in full removes block allocation from it (on \fBbtrfs\fR
+only with \fBNOCOW\fR and a single data profile), but neither removes these
+two properties.  If your system routinely runs this close to the
+edge or suspends under memory pressure, prefer zram, swap on an encrypted
+partition or another path that does not go through a loop device, or keep a
+reserve of free memory.
 .SH SIGNALS
 State information can be logged by sending the program the \fBSIGUSR1\fR signal
 (user-defined signal 1).  Not all of this information will always be current;
@@ -178,6 +288,8 @@ This is free software; see the source for copying conditions.  There is no
 warranty whatsoever.  Use entirely at your own risk.
 .SH "SEE ALSO"
 .BR kill (1),
+.BR cryptsetup (8),
+.BR losetup (8),
 .BR mkswap (8),
 .BR signal (7),
 .BR swapon (2),

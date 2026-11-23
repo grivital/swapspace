@@ -40,3 +40,37 @@ filesystems.  It is destructive and refuses to run unless
     SWAPSPACE_VM_TEST=1 ./tests/root-integration.sh /mnt/ext4 /mnt/xfs ...
 
 Pass one directory per mounted test filesystem.
+
+### Crypt mode root test
+
+`tests/crypt-root.sh` covers encrypted swapfiles (loop device and dm-crypt).  It
+activates real swap and creates mappings named `swapspace-N`, so it refuses to
+run unless it is root and `SWAPSPACE_CRYPT_TEST=1` is set:
+
+    SWAPSPACE_CRYPT_TEST=1 ./tests/crypt-root.sh [directory-on-test-fs]
+
+From a desktop session, `pkexec` starts it as root.  It strips the environment,
+so pass the variables through `env`, before the script path, and use absolute
+paths:
+
+    pkexec env SWAPSPACE_CRYPT_TEST=1 BIN=/abs/path/to/src/swapspace /abs/path/to/tests/crypt-root.sh /var/tmp
+
+`BIN` is the binary under test, an absolute path to a regular executable owned
+by root or the invoking user and not writable by group or others, which must
+support crypt mode.  Without it the script uses `src/swapspace` next to itself,
+never one found through the current directory.  The directory must not be on
+tmpfs and needs 600 MB free.  Cleanup cannot be interrupted; the script header
+says what to check by hand after a SIGKILL.
+
+The script refuses to start while a `swapspace-*` mapping exists or a swapspace
+process with crypt options (command line or configuration file) is running, and
+only swaps off, closes or detaches what it created itself.
+
+The directory (default `/var/tmp`) must be on a filesystem and device where
+direct I/O works with the loop device's block size (swapspace takes the block
+size from the file's `STATX_DIOALIGN`, so 4Kn storage is covered).  It also
+checks that a second instance, in crypt mode or with crypt off, neither adopts
+nor closes the first one's mapping.  Run it
+with the exact command above after any change to `src/cryptdev.c` or
+`src/swaps.c`; the unprivileged tests (`make check`) fake the loop and
+dm-crypt steps and cannot prove that the kernel accepts them.

@@ -45,6 +45,8 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA
 #include <linux/magic.h>
 
 #include "calc.h"
+#include "crypt.h"
+#include "cryptdev.h"
 #include "log.h"
 #include "opts.h"
 #include "state.h"
@@ -301,6 +303,12 @@ struct Swapfile
   long long created;
   /// Has this swapfile been spotted in /proc/swaps?
   bool observed_in_wild;
+  /// Is swap on the encrypted /dev/mapper/swapspace-N rather than on the file?
+  bool crypt;
+  /// For an encrypted slot: has the mapping been traced to our file?
+  bool traced;
+  /// Where the mapping sits and what backs it, once traced
+  struct crypt_mapping mapping;
 };
 
 static int sequence_number = 0;
@@ -339,16 +347,35 @@ void dump_stats(void)
   logm(LOG_INFO, "swapfiles in use: %d", activeswaps);
   if (activeswaps)
   {
+    // The crypt column is only added when some slot is encrypted, so the table
+    // is exactly what it always was otherwise.
+    bool any_crypt = false;
+    for (int i=0; i<MAX_SWAPFILES; ++i)
+      if (swapfiles[i].size && swapfiles[i].crypt) any_crypt = true;
+
     logm(LOG_INFO,
-	"file            size            used         created  seen");
+	"file            size            used         created  seen%s",
+	any_crypt ? "  crypt" : "");
     for (int i=0; i<MAX_SWAPFILES; ++i) if (swapfiles[i].size)
-      logm(LOG_INFO,
-	  "%4d%16lld%16lld%16lld  %d",
-	  i,
-	  swapfiles[i].size,
-	  swapfiles[i].used,
-	  swapfiles[i].created,
-	  (int)swapfiles[i].observed_in_wild);
+    {
+      if (any_crypt)
+	logm(LOG_INFO,
+	    "%4d%16lld%16lld%16lld  %d  %5d",
+	    i,
+	    swapfiles[i].size,
+	    swapfiles[i].used,
+	    swapfiles[i].created,
+	    (int)swapfiles[i].observed_in_wild,
+	    (int)swapfiles[i].crypt);
+      else
+	logm(LOG_INFO,
+	    "%4d%16lld%16lld%16lld  %d",
+	    i,
+	    swapfiles[i].size,
+	    swapfiles[i].used,
+	    swapfiles[i].created,
+	    (int)swapfiles[i].observed_in_wild);
+    }
   }
 }
 
@@ -418,11 +445,11 @@ memsize_t swapfs_size(void)
  */
 static bool enable_swapfile(const char file[], int *fault)
 {
-  const int mkstatus = runcommand("mkswap", file);
+  const int mkstatus = swapops->mkswap(file);
   if (unlikely(mkstatus != 0))
     logm(LOG_WARNING, "mkswap failed for '%s' (status %d)", file, mkstatus);
 
-  if (unlikely(swapon(file, 0) != 0))
+  if (unlikely(swapops->swapon(file) != 0))
   {
     const int err = errno;
     if (fault) *fault = err;
@@ -447,16 +474,18 @@ static bool enable_swapfile(const char file[], int *fault)
  *
  * @param fd file descriptor to write to
  * @param bytes number of bytes to write
+ * @param prealloc whether posix_fallocate() may be used instead of writing
  *
  * @return number of bytes written
  */
-static memsize_t write_data(int fd, memsize_t bytes, bool persevere)
+static memsize_t write_data(int fd, memsize_t bytes, bool persevere,
+    bool prealloc)
 {
   // Round upwards to multiple of page size
   bytes = ext_to_page(bytes);
 #ifdef HAVE_PFALLOCATE
  // Have posix_fallocate().  Much faster way of getting the file populated.
- if (pfalloc_ok && posix_fallocate(fd, 0, bytes) == 0) return bytes;
+ if (prealloc && pfalloc_ok && posix_fallocate(fd, 0, bytes) == 0) return bytes;
  // We have no error backchannel here, so on failure, try the old way.
 #endif
   /* Zero buffer before using it to write data to swapfile.  This doesn't do
@@ -514,14 +543,61 @@ static memsize_t overwrite_data(int fd, memsize_t bytes)
 }
 
 
+/// Delete a swapfile; under --paranoid, overwrite its contents with zeros too.
+/** The file is opened before it is unlinked, so the data can be wiped through
+ * the descriptor.  Clobbers localbuf.
+ *
+ * @param size number of bytes to overwrite, or MEMSIZE_ERROR to use the file's
+ * own size
+ */
+static void remove_swapfile(const char name[], memsize_t size)
+{
+#ifndef NO_CONFIG
+  int fd = -1;
+  if (paranoid)
+    // O_NONBLOCK: a FIFO that happens to have a numeric name must not hang us.
+    fd = open(name, O_WRONLY|O_LARGEFILE|O_NOFOLLOW|O_NONBLOCK);
+#endif
+
+  /* The kernel refuses to unlink a file that is in use as swap.  Then the
+   * contents are live swap data, which must not be wiped either.
+   */
+  if (unlikely(unlink(name) != 0))
+  {
+    log_perr_str(LOG_WARNING, "Could not delete swapfile", name, errno);
+#ifndef NO_CONFIG
+    if (fd != -1) close(fd);
+#endif
+    return;
+  }
+
+#ifndef NO_CONFIG
+  if (fd != -1)
+  {
+    struct stat st;
+    if (size == MEMSIZE_ERROR && fstat(fd, &st) == 0) size = st.st_size;
+    if (size != MEMSIZE_ERROR)
+    {
+      const memsize_t wiped = overwrite_data(fd, size);
+      if (unlikely(wiped < size))
+	log_perr_str(LOG_WARNING, "Could not wipe swapfile", name, errno);
+      if (unlikely(fsync(fd) != 0))
+	log_perr(LOG_WARNING, "Could not flush swapfile", errno);
+    }
+    close(fd);
+  }
+#endif
+}
+
+
 /// Populate swapfile by writing data to it
 /**
  * @return Real size of created file, or zero on failure
  */
-static memsize_t fill_swapfile(const char file[], int fd, memsize_t size)
+static memsize_t fill_swapfile(const char file[], int fd, memsize_t size,
+    bool prealloc)
 {
-  //
-  memsize_t bytes = write_data(fd, size, false);
+  memsize_t bytes = write_data(fd, size, false, prealloc);
 
   if (unlikely(bytes < size))
   {
@@ -554,14 +630,51 @@ static memsize_t fill_swapfile(const char file[], int fd, memsize_t size)
   return bytes;
 }
 
+/// May this new file be used through a direct I/O loop device?
+/** On btrfs a file with copy-on-write and data checksums gets its direct writes
+ * bounced through freshly allocated pages (and checksummed), which is exactly
+ * what must not happen on the swap-out path.  Without NOCOW there, crypt mode
+ * refuses rather than risk a deadlock under memory pressure.  Other
+ * filesystems write in place.  (Even with NOCOW, btrfs may still bounce when
+ * the data profile is DUP or RAID1; that cannot be checked cheaply and is
+ * documented instead.)
+ */
+static bool crypt_file_flags_ok(int fd, const char file[])
+{
+  struct statfs fs;
+  if (unlikely(fstatfs(fd, &fs) != 0))
+  {
+    log_perr_str(LOG_ERR, "Could not identify the filesystem of", file, errno);
+    return false;
+  }
+  if (fs.f_type != BTRFS_SUPER_MAGIC) return true;
+
+  int attr = 0;
+  if (likely(ioctl(fd, FS_IOC_GETFLAGS, &attr) == 0 && (attr & FS_NOCOW_FL)))
+    return true;
+
+  logm(LOG_ERR, "Refusing to create encrypted swapfile '%s': the btrfs swap "
+      "directory does not give it NOCOW, so direct writes would allocate "
+      "memory (see 'crypt' in swapspace(8))", file);
+  return false;
+}
+
+
 /// Create file to be used as swap.  Clobbers localbuf.
-/**
+/** In crypt mode the file is filled with real zeros and flushed instead of
+ * being preallocated.  posix_fallocate() leaves unwritten extents, and the
+ * first direct write to each of them needs a metadata update (allocation,
+ * extent conversion, a journal transaction) on the swap-out path, which is the
+ * wrong place to need memory.  Writing zeros and flushing them (fsync also
+ * forces delayed allocation) leaves only allocated blocks to overwrite.
+ *
  * @param filename File to be created
  * @param size Desired size in bytes (but already rounded to page size)
+ * @param crypt Whether the file will be used through a direct I/O loop device
  * @return Size of new swapfile, which may differ from requested size.  Zero
  * indicates failure, in which case the file is deleted.
  */
-static memsize_t make_swapfile(const char file[], memsize_t size)
+static memsize_t make_swapfile(const char file[], memsize_t size, bool crypt)
 {
   assert(min_swapsize <= max_swapsize);
   assert(max_swapsize == trunc_to_page(max_swapsize));
@@ -581,8 +694,19 @@ static memsize_t make_swapfile(const char file[], memsize_t size)
     return 0;
   }
 
-  if (unlikely(!fill_swapfile(file, fd, size)))
+  if (crypt && unlikely(!crypt_file_flags_ok(fd, file)))
   {
+    size = 0;
+    unlink(file);
+  }
+  else if (unlikely(!fill_swapfile(file, fd, size, !crypt)))
+  {
+    size = 0;
+    unlink(file);
+  }
+  else if (crypt && unlikely(fsync(fd) != 0))
+  {
+    log_perr_str(LOG_ERR, "Could not flush swapfile", file, errno);
     size = 0;
     unlink(file);
   }
@@ -612,6 +736,19 @@ static bool valid_swapfile(const char filename[], int *seqno)
   if (unlikely(*endptr || seql < 0 || seql >= MAX_SWAPFILES)) return false;
   *seqno = (int)seql;
   return true;
+}
+
+
+/// Slots whose foreign encrypted mapping has been reported, to log it once
+static unsigned foreign_logged = 0;
+
+/// Say once per slot that a mapping of that name is not ours and left alone
+static void note_foreign(int slot)
+{
+  if (foreign_logged & (1u << slot)) return;
+  foreign_logged |= 1u << slot;
+  logm(LOG_NOTICE, "Ignoring mapping swapspace-%d: it is not backed by a "
+      "swapfile in this swap directory", slot);
 }
 
 
@@ -655,6 +792,8 @@ static memsize_t filesize(const char name[])
 }
 
 
+static bool listed_in_proc_swaps(const char name[]);
+
 bool activate_old_swaps(void)
 {
   DIR *dir = opendir(".");
@@ -671,6 +810,61 @@ bool activate_old_swaps(void)
 #ifndef NO_CONFIG
       if (!quiet) logm(LOG_INFO, "Found old swapfile '%d'", seqno);
 #endif
+
+      // Plain mode leaves non-regular files alone (see filesize()); crypt mode
+      // deletes old files, so it must check.
+      struct stat entry;
+      if (crypt_enabled &&
+	  (lstat(d->d_name, &entry) != 0 || !S_ISREG(entry.st_mode)))
+      {
+	logm(LOG_NOTICE, "Leaving '%d' alone: not a regular file", seqno);
+	continue;
+      }
+
+      /* In crypt mode a file that is in use as swap, but not listed under
+       * our directory's path (reached through a bind mount or a symlink, say),
+       * must not be deleted: nothing could swap it off by name afterwards.
+       * Plain mode learns the same from swapon() failing with EBUSY below.
+       */
+      if (crypt_enabled && unlikely(listed_in_proc_swaps(d->d_name)))
+      {
+	logm(LOG_NOTICE, "Swapfile '%d' is in use as swap; leaving it in place",
+	    seqno);
+	continue;
+      }
+
+      /* A mapping that is not in /proc/swaps is a leftover from an
+       * interrupted setup or retirement, if it sits on our file.  If it cannot
+       * be removed, the file is still in use through its loop device: leave
+       * both alone.  A mapping of that name that is not ours (another
+       * instance's) is never touched, in any mode; in crypt mode the slot is
+       * then unusable, so its file is left too.
+       */
+      const enum crypt_stale stale = crypt_clear_stale(seqno, d->d_name);
+      if (unlikely(stale == CRYPT_SLOT_HELD))
+      {
+	logm(LOG_NOTICE, "Swapfile '%d' is held by a mapping that cannot be "
+	    "removed; leaving it in place", seqno);
+	continue;
+      }
+      if (unlikely(stale == CRYPT_SLOT_FOREIGN) && crypt_enabled)
+      {
+	note_foreign(seqno);
+	continue;
+      }
+
+      /* An inactive file cannot be reused in crypt mode.  If it was encrypted,
+       * its key died with the previous run; if it was plain, it may hold
+       * readable data.  Delete it; a new one is created when needed.
+       */
+      if (crypt_enabled)
+      {
+	logm(LOG_NOTICE,
+	    "Deleting old swapfile '%d': crypt mode cannot reuse it", seqno);
+	remove_swapfile(d->d_name, MEMSIZE_ERROR);
+	continue;
+      }
+
       const memsize_t size = filesize(d->d_name);
       if (unlikely(size == MEMSIZE_ERROR))
       {
@@ -715,11 +909,40 @@ bool activate_old_swaps(void)
 }
 
 
+/// Where the kernel lists active swap; tests that include this file change it
+static const char *proc_swaps_path = "/proc/swaps";
+
 static FILE *open_proc_swaps(void)
 {
-  FILE *fp = fopen("/proc/swaps", "r");
+  FILE *fp = fopen(proc_swaps_path, "r");
   if (unlikely(!fp)) log_perr(LOG_ERR, "Could not open /proc/swaps", errno);
   return fp;
+}
+
+
+/// Is the file listed in /proc/swaps under any path?  Clobbers localbuf.
+/** Compares device and inode, so a path through a symlink or bind mount counts.
+ * If this cannot be told, the answer is yes: callers use it to avoid deleting.
+ */
+static bool listed_in_proc_swaps(const char name[])
+{
+  struct stat ours;
+  if (stat(name, &ours) != 0) return true;
+
+  FILE *const fp = open_proc_swaps();
+  if (!fp) return true;
+
+  bool found = false;
+  while (!found && fgets(localbuf, sizeof(localbuf), fp))
+  {
+    char path[PATH_MAX+1];
+    struct stat st;
+    if (sscanf(localbuf, "%"PMS"s", path) == 1 && stat(path, &st) == 0 &&
+	st.st_dev == ours.st_dev && st.st_ino == ours.st_ino)
+      found = true;
+  }
+  fclose(fp);
+  return found;
 }
 
 
@@ -794,10 +1017,45 @@ static int get_swapfile_status(FILE *fp, struct swapfile_info *result)
     result->size *= KILO;
     result->used *= KILO;
 
-    if (likely(strcmp(type, "file") == 0) &&
+    const bool is_file = likely(strcmp(type, "file") == 0) &&
 	likely(strncmp(result->name, swappath, swappath_len) == 0) &&
 	likely(result->name[swappath_len] == '/') &&
-	likely(valid_swapfile(result->name+swappath_len+1, &result->seqno)))
+	likely(valid_swapfile(result->name+swappath_len+1, &result->seqno));
+
+    /* Encrypted swapfiles are listed under their mapper device.  Mapping
+     * names are global, so the name alone proves nothing: it is ours only if
+     * the loop device under it is backed by our file of that number.  Adopting
+     * another instance's mapping would let us close it later and delete our
+     * own file.  Slots already tracked are checked again on every read,
+     * cheaply, against the identity recorded when they were first seen: a
+     * mapping that was replaced under the same name stops being ours.
+     */
+    bool is_crypt = false;
+    if (!is_file &&
+	crypt_swaps_slot(result->name, MAX_SWAPFILES, &result->seqno))
+    {
+      struct Swapfile *const sf = &swapfiles[result->seqno];
+      if (sf->size && sf->crypt && sf->traced)
+      {
+	is_crypt = crypt_mapping_unchanged(&sf->mapping, result->seqno);
+      }
+      else if (!sf->size || sf->crypt)
+      {
+	char file[30];
+	snprintf(file, sizeof(file), "%d", result->seqno);
+	struct crypt_mapping m;
+	is_crypt = crypt_mapping_trace(result->name, result->seqno, &m) &&
+	  crypt_mapping_is(&m, file);
+	if (is_crypt)
+	{
+	  sf->mapping = m;
+	  sf->traced = true;
+	}
+      }
+      if (!is_crypt) note_foreign(result->seqno);
+    }
+
+    if (is_file || is_crypt)
     {
       // Found what looks to be one of our swapfiles.  Update our list.
       if (unlikely(!swapfiles[result->seqno].size))
@@ -807,6 +1065,7 @@ static int get_swapfile_status(FILE *fp, struct swapfile_info *result)
 	if (!quiet) logm(LOG_NOTICE, "Detected swapfile '%d'", result->seqno);
 #endif
 	swapfiles[result->seqno].created = runclock;
+	swapfiles[result->seqno].crypt = is_crypt;
       }
 #ifndef NO_CONFIG
       else if (unlikely(swapfiles[result->seqno].size != result->size))
@@ -876,7 +1135,10 @@ bool read_proc_swaps(void)
   // Scratch from swapfiles[] any swapfiles that were deactivated from outside
   for (int i=0; i<MAX_SWAPFILES; ++i)
     if (unlikely(swapfiles[i].size && !swapfiles[i].observed_in_wild))
+    {
       swapfiles[i].size = 0;
+      swapfiles[i].crypt = swapfiles[i].traced = false;
+    }
 
   return true;
 }
@@ -903,29 +1165,16 @@ static bool retire_swapfile(int file)
 #ifndef NO_CONFIG
   if (!quiet) logm(LOG_NOTICE, "Retiring swapfile '%d'", file);
 #endif
-  if (unlikely(swapoff(namebuf) == -1)) return false;
-
-#ifndef NO_CONFIG
-  int fd = -1;
-  if (paranoid)
-    fd = open(namebuf, O_WRONLY|O_LARGEFILE|O_NOFOLLOW);
-#endif
-
-  unlink(namebuf);
-
-#ifndef NO_CONFIG
-  if (fd != -1) {
-    const memsize_t size = swapfiles[file].size;
-    const memsize_t wiped = overwrite_data(fd, size);
-    if (unlikely(wiped < size))
-      log_perr_str(LOG_WARNING, "Could not wipe swapfile", namebuf, errno);
-    if (unlikely(fsync(fd) != 0))
-      log_perr(LOG_WARNING, "Could not flush swapfile", errno);
-    close(fd);
+  if (swapfiles[file].crypt)
+  {
+    if (unlikely(!crypt_retire(file))) return false;
   }
-#endif
+  else if (unlikely(swapops->swapoff(namebuf) == -1)) return false;
+
+  remove_swapfile(namebuf, swapfiles[file].size);
 
   swapfiles[file].size = 0;
+  swapfiles[file].crypt = swapfiles[file].traced = false;
   return true;
 }
 
@@ -998,7 +1247,7 @@ bool alloc_swapfile(memsize_t size)
    */
   if (unlikely(size > max_swapsize)) size = max_swapsize;
 
-  const int newswap = find_free(sequence_number);
+  int newswap = find_free(sequence_number);
   if (unlikely(swapfiles[newswap].size))
   {
     // No free slot.  Turn to "diet" policy instead of retrying every second.
@@ -1013,13 +1262,42 @@ bool alloc_swapfile(memsize_t size)
     return false;
   }
 
+  /* A leftover mapping of ours is removed first.  One that is not ours (it
+   * belongs to another instance) is never touched: in crypt mode skip that
+   * slot number and take the next free one.  In plain mode such a mapping does
+   * not hold our file, so the slot is usable; but one that holds it (left by
+   * an earlier crypt run) must not have its file unlinked under it.
+   */
+  const bool crypt = crypt_enabled;
+  char file[30];
+  snprintf(file, sizeof(file), "%d", newswap);
+  bool usable = false;
+  for (int tries = 0; !usable && tries < MAX_SWAPFILES; ++tries)
+  {
+    const enum crypt_stale stale = crypt_clear_stale(newswap, file);
+    usable = stale == CRYPT_SLOT_FREE || (!crypt && stale == CRYPT_SLOT_FOREIGN);
+    if (usable) break;
+
+    sequence_number = newswap;
+    if (stale == CRYPT_SLOT_HELD) break;
+    note_foreign(newswap);
+    const int next = find_free(newswap);
+    if (next == newswap || swapfiles[next].size) break;
+    newswap = next;
+    snprintf(file, sizeof(file), "%d", newswap);
+  }
+  if (unlikely(!usable))
+  {
+    // A mapping we cannot remove, or no usable slot.  Try again next time.
+    request_diet();
+    return false;
+  }
+
   // We can allocate another swapfile.  Great.
 #ifndef NO_CONFIG
   if (!quiet) logm(LOG_NOTICE, "Allocating swapfile '%d'", newswap);
 #endif
-  char file[30];
-  snprintf(file, sizeof(file), "%d", newswap);
-  swapfiles[newswap].size = make_swapfile(file, size);
+  swapfiles[newswap].size = make_swapfile(file, size, crypt);
   if (unlikely(!swapfiles[newswap].size))
   {
     request_diet();
@@ -1027,11 +1305,31 @@ bool alloc_swapfile(memsize_t size)
   }
 
   int err = 0;
-  if (unlikely(!enable_swapfile(file, &err)))
+  bool enabled, held = false;
+  if (crypt)
   {
-    unlink(file);
+    // Never falls back to enabling the plain file.
+    const enum crypt_result result = crypt_enable(newswap, file);
+    enabled = result == CRYPT_OK;
+    held = result == CRYPT_HELD;
+  }
+  else
+  {
+    enabled = enable_swapfile(file, &err);
+  }
+
+  if (unlikely(!enabled))
+  {
+    /* A mapping that could not be removed still holds the file through its
+     * loop device.  Keep the file, as retiring does; the leftover is removed
+     * the next time this slot is used, or at the next startup.
+     */
+    if (unlikely(held))
+      logm(LOG_NOTICE, "Keeping swapfile '%d': a mapping still holds it", newswap);
+    else
+      unlink(file);
     swapfiles[newswap].size = 0;
-    if (pfalloc_ok && err == EINVAL)
+    if (!crypt && pfalloc_ok && err == EINVAL)
     {
       logm(LOG_NOTICE, "Quick swapfile creation disabled.");
       // If we get EINVAL, then we can't actually use posix_fallocate
@@ -1048,6 +1346,8 @@ bool alloc_swapfile(memsize_t size)
 
   swapfiles[newswap].created = runclock;
   swapfiles[newswap].used = 0;
+  swapfiles[newswap].crypt = crypt;
+  swapfiles[newswap].traced = false;
   sequence_number = inc_swapno(sequence_number);
 
   return true;
