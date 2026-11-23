@@ -23,6 +23,7 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA
 
 #include <ctype.h>
 #include <errno.h>
+#include <limits.h>
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
@@ -93,6 +94,87 @@ memsize_t ideal_swapsize(memsize_t totalspace, memsize_t freespace,
    * nearest integer, not downwards:
    */
   return 100 * ((freespace-freetarget*((totalspace+50)/100))/(freetarget-100));
+}
+
+
+/// Multiply a size by factor >= 1, level times, saturating at the largest
+/// aligned size
+static memsize_t scale_size(memsize_t n, int factor, int level)
+{
+  const memsize_t cap = trunc_to_page(LLONG_MAX);
+  if (n <= 0) return n;
+  for (int i=0; i<level; ++i)
+  {
+    if (n > cap / factor) return cap;
+    n *= factor;
+  }
+  return trunc_to_page(n);
+}
+
+
+int compact_level(int active, int threshold, int factor)
+{
+  if (threshold <= 0 || factor <= 1 || active < threshold) return 0;
+  return active - threshold + 1;
+}
+
+
+bool compact_limits(int active, int threshold, int factor, memsize_t cap,
+    memsize_t minsize, memsize_t maxsize,
+    memsize_t *outmin, memsize_t *outmax)
+{
+  const int level = compact_level(active, threshold, factor);
+  if (!level)
+  {
+    *outmin = minsize;
+    *outmax = maxsize;
+    return false;
+  }
+
+  memsize_t newmax = scale_size(maxsize, factor, level);
+  if (cap > 0 && newmax > trunc_to_page(cap)) newmax = trunc_to_page(cap);
+  if (newmax < maxsize) newmax = maxsize;
+
+  memsize_t newmin = scale_size(minsize, factor, level);
+  if (newmin > newmax) newmin = newmax;
+
+  *outmin = newmin;
+  *outmax = newmax;
+  return true;
+}
+
+
+/// Clamp size into [min, max]
+static memsize_t clamp_size(memsize_t size, memsize_t min, memsize_t max)
+{
+  if (size < min) return min;
+  if (size > max) return max;
+  return size;
+}
+
+
+memsize_t choose_swapsize(memsize_t request,
+    memsize_t base_min, memsize_t base_max,
+    memsize_t compact_min, memsize_t compact_max,
+    memsize_t free_space, memsize_t *out_min, memsize_t *out_max)
+{
+  memsize_t size = clamp_size(request, compact_min, compact_max);
+  if (size <= free_space)
+  {
+    *out_min = compact_min;
+    *out_max = compact_max;
+    return size;
+  }
+
+  // Without compaction this is the same size, so it fails the same way.
+  size = clamp_size(request, base_min, base_max);
+  if (size <= free_space)
+  {
+    *out_min = base_min;
+    *out_max = base_max;
+    return size;
+  }
+  return 0;
 }
 
 

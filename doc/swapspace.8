@@ -68,6 +68,23 @@ Read \fIfile\fR instead of the default configuration file.
 \fB\-C\fR \fIp\fR, \fB\-\-cache_elasticity\fR=\fIp\fR
 Consider \fIp\fR% of filesystem cache to be available for other use.
 .TP
+\fB\-K\fR \fIn\fR, \fB\-\-compact_factor\fR=\fIn\fR
+While compaction is in effect (see \fBCOMPACTION\fR below), multiply the size
+limits for a new swapfile by \fIn\fR once for every swapfile at or above the
+threshold.  Accepts 1 to 16; the default is 2.  A factor of 1 means that
+compaction has no effect.
+.TP
+\fB\-Z\fR \fIsize\fR, \fB\-\-compact_max_swapsize\fR=\fIsize\fR
+Never let a compacted swapfile become larger than \fIsize\fR bytes.  The
+default is 16g; 0 removes the limit.  A value below \fB\-\-max_swapsize\fR
+does not make swapfiles smaller than that.  A nonzero value below 10 pages is
+rejected as a configuration error.
+.TP
+\fB\-k\fR \fIn\fR, \fB\-\-compact_threshold\fR=\fIn\fR
+Start compaction (see \fBCOMPACTION\fR below) when \fIn\fR or more swapfiles
+created by \fBswapspace\fR are in use.  Accepts 1 to 31; the default is 16.  0
+disables compaction.
+.TP
 \fB\-d\fR, \fB\-\-daemon\fR
 Run quietly in the background.  This is the normal way to run the program.
 .TP
@@ -152,6 +169,38 @@ program you would run on a hard-realtime system.
 Any messages are sent to the system daemon log; it is also printed to the
 standard output/error streams (as appropriate based on the urgency of each
 individual message) if available.
+.SH COMPACTION
+The kernel allows only a limited number of swap areas in total: at most 32, and
+often 24\-28 depending on kernel configuration and other swap areas.  Every
+swapfile uses one of them.  Swap areas that \fBswapspace\fR does not manage,
+such as zram and swap partitions, use some as well.  If many
+swapfiles are active, \fBswapspace\fR could run out of slots before it has
+enough swap.
+.PP
+To postpone that, \fBswapspace\fR enlarges new swapfiles while at least
+\fBcompact_threshold\fR of its own swapfiles are in use.  With \fIn\fR =
+(swapfiles in use) \- \fBcompact_threshold\fR + 1, both the minimum and the
+maximum size of a new swapfile are multiplied by \fBcompact_factor\fR to the
+power \fIn\fR, and the maximum is then limited to \fBcompact_max_swapsize\fR.
+With the defaults and \fBmax_swapsize\fR=1g, the 17th swapfile may be up to 2
+GiB, the 18th 4 GiB, then 8 GiB and 16 GiB; from then on new swapfiles stay at
+the limit of 16 GiB.  Make sure the disk has room for such files; if a
+compacted file does not fit in the free disk space, \fBswapspace\fR uses the
+configured size instead.  The sizes are upper bounds: a swapfile is only as
+large as the amount of swap that is needed, but at least as large as the
+enlarged minimum.
+.PP
+Compaction is evaluated whenever a swapfile is allocated or retired, from the
+current number of swapfiles, so it is temporary: when swapfiles are retired and
+the count drops, new swapfiles are smaller again, and below the threshold they
+have their normal size.  Existing swapfiles are never resized or re-created,
+and the choice of which swapfile to retire is unchanged.  A message is logged
+when compaction starts and when it ends.
+.PP
+Compaction does not create more swap slots; it makes each new slot larger.  It
+does not help once all slots are in use.  The threshold counts only the
+swapfiles of \fBswapspace\fR, so choose it with the other swap areas of the
+system in mind: if zram takes a few slots, lower the threshold accordingly.
 .SH SIGNALS
 State information can be logged by sending the program the \fBSIGUSR1\fR signal
 (user-defined signal 1).  Not all of this information will always be current;

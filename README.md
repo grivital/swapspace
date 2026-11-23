@@ -101,6 +101,15 @@ You'll find a manual under "doc" in the source tree.  Read it with:
 
     man -l doc/swapspace.8
 
+Near the kernel's limit on the number of swap areas (at most 32, and often
+24-28 depending on kernel config and other swap areas such as zram and swap
+partitions), swapspace can make new swapfiles progressively larger (compaction;
+see the `compact_threshold`, `compact_factor` and `compact_max_swapsize`
+options).  With a 1 GiB maximum swapfile size the defaults allow 2, 4, 8 and
+then 16 GiB files from the 17th swapfile on, so keep disk headroom in mind.
+If there is not enough disk space for a compacted file, swapspace falls back to
+the configured size.
+
 For the technical details of the algorithm used to allocate swapfiles,
 see `doc/technicaldetails.md`
 

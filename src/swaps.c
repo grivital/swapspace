@@ -79,6 +79,14 @@ static memsize_t min_swapsize = 4*MEGA;
  */
 static memsize_t max_swapsize = 2*TERA;
 
+/// Active swapfile count at which new swapfiles start to be enlarged
+/** Zero disables compaction.  See compact_limits() in calc.c. */
+static int compact_threshold = 16;
+/// Size multiplier per compaction level
+static int compact_factor = 2;
+/// Upper bound for the compacted maximum swapfile size; zero for none
+static memsize_t compact_max_swapsize = 16*GIGA;
+
 #ifndef NO_CONFIG
 char *set_swappath(long long dummy)
 {
@@ -92,6 +100,22 @@ char *set_min_swapsize(long long size)
 char *set_max_swapsize(long long size)
 {
   max_swapsize = trunc_to_page(size);
+  return NULL;
+}
+
+char *set_compact_threshold(long long count)
+{
+  compact_threshold = (int)count;
+  return NULL;
+}
+char *set_compact_factor(long long factor)
+{
+  compact_factor = (int)factor;
+  return NULL;
+}
+char *set_compact_max_swapsize(long long size)
+{
+  compact_max_swapsize = size;
   return NULL;
 }
 
@@ -109,6 +133,9 @@ bool swaps_check_config(void)
 {
   CHECK_CONFIG_ERR(min_swapsize > max_swapsize);
   CHECK_CONFIG_ERR(min_swapsize < 10*getpagesize());
+  // Below a page the cap would be truncated to zero, which means "no cap".
+  CHECK_CONFIG_ERR(compact_max_swapsize &&
+      compact_max_swapsize < 10*getpagesize());
 
   if (swappath[0] != '/')
   {
@@ -305,13 +332,6 @@ struct Swapfile
 
 static int sequence_number = 0;
 
-/// Power-of-two defining how many active swapfiles to support
-/** Since swapspace allocates swapfiles of increasing sizes, there is probably
- * little need for a large number of swapfile slots.
- */
-#define MAXSWAPS_SHIFT 5
-#define MAX_SWAPFILES (1 << MAXSWAPS_SHIFT)
-
 /// Array of swapfile descriptors
 /** The last element remains zeroed for use as a sentry.
  */
@@ -322,6 +342,64 @@ static bool proc_swaps_read_ok = false;
 
 /// Can we allocate swapfiles using posix_allocate on this filesystem?
 static bool pfalloc_ok = true;
+
+/// Count active swapfiles
+/** Not kept in a counter: that would be one more thing to keep in sync with
+ * swapfiles[].
+ */
+static int count_swapfiles(void)
+{
+  int active = 0;
+  for (int i=0; i<MAX_SWAPFILES; ++i) if (swapfiles[i].size) ++active;
+  return active;
+}
+
+/// Compaction level as of the last evaluation; 0 means not compacting
+static int compaction_level = 0;
+
+/// Effective swapfile size limits for new swapfiles; logs compaction changes
+/** Compaction is evaluated here, at allocation time, from the current number
+ * of active swapfiles.  That makes it temporary by construction: once enough
+ * swapfiles have been retired, new swapfiles have their normal size again.
+ * Existing swapfiles are never resized.
+ */
+static void current_limits(memsize_t *minsize, memsize_t *maxsize)
+{
+  const int active = count_swapfiles();
+  compact_limits(active, compact_threshold, compact_factor,
+      compact_max_swapsize, min_swapsize, max_swapsize, minsize, maxsize);
+
+  const int level = compact_level(active, compact_threshold, compact_factor);
+  if (likely(level == compaction_level)) return;
+
+#ifndef NO_CONFIG
+  const bool was_compacting = compaction_level > 0;
+#endif
+  compaction_level = level;
+  /* Log only when compaction starts or ends.  Level changes in between are
+   * routine (one per allocation or retirement), so they are verbose-only.
+   */
+#ifndef NO_CONFIG
+  if (quiet) return;
+  if (was_compacting && level)
+  {
+    if (verbose)
+      logm(LOG_INFO, "Compaction level %d: new swapfiles up to %lld bytes",
+	  level, (long long)*maxsize);
+    return;
+  }
+#endif
+  if (level)
+    logm(LOG_NOTICE,
+	"Compaction started: %d swapfiles in use (threshold %d); "
+	"new swapfiles up to %lld bytes",
+	active, compact_threshold, (long long)*maxsize);
+  else
+    logm(LOG_NOTICE,
+	"Compaction ended: %d swapfiles in use (threshold %d); "
+	"new swapfiles have normal size again",
+	active, compact_threshold);
+}
 
 /// Print status information to stdout
 void dump_stats(void)
@@ -334,9 +412,9 @@ void dump_stats(void)
   // Count active swapfiles.  Note that we don't remember this anywhere; it's
   // rarely needed (only when requested), it's not very costly to derive, and
   // keeping a redundant counter is just asking for minor bugs.
-  int activeswaps = 0;
-  for (int i=0; i<MAX_SWAPFILES; ++i) if (swapfiles[i].size) ++activeswaps;
+  const int activeswaps = count_swapfiles();
   logm(LOG_INFO, "swapfiles in use: %d", activeswaps);
+  logm(LOG_INFO, "compaction level: %d", compaction_level);
   if (activeswaps)
   {
     logm(LOG_INFO,
@@ -539,6 +617,19 @@ static memsize_t fill_swapfile(const char file[], int fd, memsize_t size)
 	  logm(LOG_INFO, "Restricting swapfile size to %lld", (long long)bytes);
 #endif
       }
+      /* A compacted swapfile can exceed the limit even if the configured
+       * maximum does not.  Learn the limit as the compaction cap as well.
+       */
+      if (unlikely(compaction_level && trunc_to_page(bytes) > 0 &&
+	    (!compact_max_swapsize || compact_max_swapsize > bytes)))
+      {
+	compact_max_swapsize = trunc_to_page(bytes);
+#ifndef NO_CONFIG
+        if (verbose)
+	  logm(LOG_INFO, "Restricting compacted swapfile size to %lld",
+	      (long long)bytes);
+#endif
+      }
       break;
     case ENOSPC:
     case EIO:
@@ -558,19 +649,22 @@ static memsize_t fill_swapfile(const char file[], int fd, memsize_t size)
 /**
  * @param filename File to be created
  * @param size Desired size in bytes (but already rounded to page size)
+ * @param minsize Effective minimum size (see current_limits())
+ * @param maxsize Effective maximum size (see current_limits())
  * @return Size of new swapfile, which may differ from requested size.  Zero
  * indicates failure, in which case the file is deleted.
  */
-static memsize_t make_swapfile(const char file[], memsize_t size)
+static memsize_t make_swapfile(const char file[], memsize_t size,
+    memsize_t minsize, memsize_t maxsize)
 {
-  assert(min_swapsize <= max_swapsize);
-  assert(max_swapsize == trunc_to_page(max_swapsize));
-  assert(min_swapsize == trunc_to_page(min_swapsize));
+  assert(minsize <= maxsize);
+  assert(maxsize == trunc_to_page(maxsize));
+  assert(minsize == trunc_to_page(minsize));
   assert(size == trunc_to_page(size));
 
-  if (unlikely(size < min_swapsize)) return 0;
+  if (unlikely(size < minsize)) return 0;
 
-  size = MIN(size, max_swapsize);
+  size = MIN(size, maxsize);
 
   unlink(file);
 
@@ -986,17 +1080,9 @@ bool alloc_swapfile(memsize_t size)
    */
   size = trunc_to_page(size) + 2*getpagesize();
 
-  /* Clamp tiny requests up to min_swapsize; make_swapfile() would otherwise
-   * reject them silently on every iteration.
-   */
-  if (unlikely(size < min_swapsize)) size = min_swapsize;
-
-  /* Cap the request before checking free disk space: the ideal request can
-   * easily exceed max_swapsize, and make_swapfile() would cap it anyway.
-   * Checking the uncapped size would refuse to allocate anything at all when
-   * the filesystem is smaller than the ideal request.
-   */
-  if (unlikely(size > max_swapsize)) size = max_swapsize;
+  // Configured limits, scaled up once the active count reaches the threshold.
+  memsize_t cmin, cmax;
+  current_limits(&cmin, &cmax);
 
   const int newswap = find_free(sequence_number);
   if (unlikely(swapfiles[newswap].size))
@@ -1006,7 +1092,17 @@ bool alloc_swapfile(memsize_t size)
     return false;
   }
 
-  if (unlikely(size > swapfs_free()))
+  /* Clamp the request to the limits before checking free disk space: the ideal
+   * request can easily exceed the maximum and make_swapfile() would cap it
+   * anyway, so checking the raw size would refuse everything on a small
+   * filesystem.  Tiny requests are raised to the minimum because
+   * make_swapfile() would reject them silently on every iteration.  If the
+   * compacted size does not fit, the configured size is tried before giving up.
+   */
+  memsize_t minsize, maxsize;
+  size = choose_swapsize(size, min_swapsize, max_swapsize, cmin, cmax,
+      swapfs_free(), &minsize, &maxsize);
+  if (unlikely(!size))
   {
     // Not enough disk space.  Free up excess swapfiles if we have any.
     request_diet();
@@ -1019,7 +1115,7 @@ bool alloc_swapfile(memsize_t size)
 #endif
   char file[30];
   snprintf(file, sizeof(file), "%d", newswap);
-  swapfiles[newswap].size = make_swapfile(file, size);
+  swapfiles[newswap].size = make_swapfile(file, size, minsize, maxsize);
   if (unlikely(!swapfiles[newswap].size))
   {
     request_diet();
@@ -1057,5 +1153,10 @@ bool alloc_swapfile(memsize_t size)
 void free_swapfile(memsize_t maxsize)
 {
   const int victim = find_retirable(maxsize);
-  if (victim < MAX_SWAPFILES) retire_swapfile(victim);
+  if (victim < MAX_SWAPFILES && retire_swapfile(victim))
+  {
+    // Notice the end of compaction now rather than at the next allocation.
+    memsize_t minsize, maxsize;
+    current_limits(&minsize, &maxsize);
+  }
 }

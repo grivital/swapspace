@@ -42,6 +42,44 @@ log debug information to the system's daemon log and/or standard output, as
 appropriate.  The program can also be made to log state transitions by starting
 it with the -v or --verbose option.
 
+Swapfile compaction
+-------------------
+
+The kernel supports only a limited number of swap areas (at most 32, and often
+24-28 depending on kernel config and other swap areas; swapspace's own limit is
+`MAX_SWAPFILES`, 32), and swap devices such as zram and swap partitions use some
+of them.  Compaction postpones running out of
+slots by making each new swapfile larger.
+
+It sits in `alloc_swapfile()`, which asks `compact_limits()` in `calc.c` for the
+effective minimum and maximum swapfile size.  Let `active` be the number of
+swapfiles in use, counted from the `swapfiles[]` array, and `n = active -
+compact_threshold + 1`.  If `compact_threshold` is nonzero, `compact_factor` is
+above 1 and `n >= 1`, both `min_swapsize` and `max_swapsize` are multiplied by
+`compact_factor^n` (saturating, page aligned).  The maximum is then limited to
+`compact_max_swapsize` (0 means no limit), but never to less than
+`max_swapsize`, and the minimum never exceeds the maximum.  With `max_swapsize`
+at 1 GiB and the defaults (threshold 16, factor 2, cap 16 GiB), swapfiles 1 to
+16 may be 1 GiB, and swapfiles 17 to 20 may be 2, 4, 8 and 16 GiB; later files
+stay at 16 GiB.  Without a cap the sizes would continue to double, so disk
+headroom matters.  `choose_swapsize()` in `calc.c` then checks the free disk
+space: the compacted size is used if it fits, otherwise the size from the
+configured limits, otherwise the allocation fails and the daemon goes on a
+diet, as it did before compaction existed.
+
+The mode keeps no state apart from a level used to log changes.  The multiplier
+is computed from the current count at allocation time, and again after a
+retirement, so when swapfiles are retired the next allocation steps back down,
+and below the threshold new swapfiles have their normal size.  Existing
+swapfiles are never resized.  Retirement policy is unchanged.  A NOTICE is
+logged when compaction starts and ends; `--verbose` also logs level changes.
+
+Compaction is a mitigation.  It does not add slots and does not help once every
+slot is in use.  The threshold counts only swapspace's own swapfiles, not zram
+or other swap areas, so it should be lowered by the number of slots those take.
+It relates to Tookmund/Swapspace#45 but is not the full algorithm proposed
+there.
+
 External signals
 ----------------
 

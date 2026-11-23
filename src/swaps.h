@@ -24,6 +24,15 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA
 
 #include "memory.h"
 
+/// Power-of-two defining how many active swapfiles to support
+/** Since swapspace allocates swapfiles of increasing sizes, there is probably
+ * little need for a large number of swapfile slots.  The kernel allows only a
+ * limited number of swap areas in total, and swap devices that are not managed
+ * by swapspace use up some of them.
+ */
+#define MAXSWAPS_SHIFT 5
+#define MAX_SWAPFILES (1 << MAXSWAPS_SHIFT)
+
 /// Dump statistics to stdout
 void dump_stats(void);
 
@@ -85,6 +94,9 @@ extern bool paranoid;
 
 char *set_min_swapsize(long long size);
 char *set_max_swapsize(long long size);
+char *set_compact_threshold(long long count);
+char *set_compact_factor(long long factor);
+char *set_compact_max_swapsize(long long size);
 char *set_swappath(long long dummy);
 char *set_paranoid(long long dummy);
 
