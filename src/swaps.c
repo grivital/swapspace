@@ -101,6 +101,14 @@ char *set_paranoid(long long dummy)
   paranoid = true;
   return NULL;
 }
+
+/// Ask the kernel to discard (TRIM) freed swap pages and the whole file at swapon
+static bool use_discard = false;
+char *set_discard(long long dummy)
+{
+  use_discard = true;
+  return NULL;
+}
 #endif
 
 
@@ -422,7 +430,19 @@ static bool enable_swapfile(const char file[], int *fault)
   if (unlikely(mkstatus != 0))
     logm(LOG_WARNING, "mkswap failed for '%s' (status %d)", file, mkstatus);
 
-  if (unlikely(swapon(file, 0) != 0))
+  int flags = 0;
+#ifndef NO_CONFIG
+  if (use_discard) flags = SWAP_FLAG_DISCARD;
+#endif
+  int rc = swapon(file, flags);
+  if (unlikely(rc != 0 && flags != 0 && errno == EINVAL))
+  {
+    // The kernel rejected the discard flag: retry plainly rather than lose the file
+    logm(LOG_WARNING,
+	"swapon rejected the discard flag for '%s' (EINVAL); retrying without", file);
+    rc = swapon(file, 0);
+  }
+  if (unlikely(rc != 0))
   {
     const int err = errno;
     if (fault) *fault = err;

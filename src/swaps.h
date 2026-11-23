@@ -87,6 +87,7 @@ char *set_min_swapsize(long long size);
 char *set_max_swapsize(long long size);
 char *set_swappath(long long dummy);
 char *set_paranoid(long long dummy);
+char *set_discard(long long dummy);
 
 /// Verify configuration for swaps module; cd into swappath
 bool swaps_check_config(void);

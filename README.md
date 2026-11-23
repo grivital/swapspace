@@ -41,6 +41,11 @@ may arguably be safer.  But keeping your swap files across reboots means you
 spend less time waiting for swap files that you also needed the last time you
 used your computer.
 
+Swap files are created with the NOCOW attribute where the filesystem supports it
+(btrfs needs this for swap files).  With the `discard` option swapspace also asks the
+kernel to TRIM them when they are activated and as swap pages are freed; see
+`swapspace(8)`.
+
 What it does for you
 --------------------
 

@@ -71,6 +71,14 @@ Consider \fIp\fR% of filesystem cache to be available for other use.
 \fB\-d\fR, \fB\-\-daemon\fR
 Run quietly in the background.  This is the normal way to run the program.
 .TP
+\fB\-D\fR, \fB\-\-discard\fR
+Ask the kernel to discard (TRIM) swap pages as they are freed, and the whole
+swapfile when it is activated, by passing \fBSWAP_FLAG_DISCARD\fR to
+\fBswapon\fR(2).  Kernels and devices without discard support ignore the flag;
+if the kernel rejects it (\fBEINVAL\fR), \fBswapspace\fR logs a warning and retries
+without it.  When the C library has no \fBswapon\fR(2), the \fB/sbin/swapon\fR
+command is used instead, and that fallback ignores this option.
+.TP
 \fB\-e\fR, \fB\-\-erase\fR
 Attempt to free up all allocated swap files.  Returns 0 if all files were
 successfully erased, or 1 otherwise.

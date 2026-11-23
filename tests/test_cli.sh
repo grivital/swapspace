@@ -17,6 +17,24 @@ trap 'rm -rf "$TMP"' EXIT HUP INT TERM
 "$BIN" -V >/dev/null 2>&1 || fail "-V failed"
 "$BIN" -h >/dev/null 2>&1 || fail "-h failed"
 
+# The discard flag takes no argument
+cat >"$TMP/discard.conf" <<EOF
+swappath = "$TMP"
+discard
+EOF
+
+"$BIN" -i -c "$TMP/discard.conf" >/dev/null 2>&1 ||
+  fail "valid discard configuration rejected"
+
+cat >"$TMP/discardarg.conf" <<EOF
+swappath = "$TMP"
+discard = 1
+EOF
+
+if "$BIN" -i -c "$TMP/discardarg.conf" >/dev/null 2>&1; then
+  fail "discard with an argument accepted"
+fi
+
 if "$BIN" --definitely-not-an-option >/dev/null 2>&1; then
   fail "invalid option accepted"
 fi

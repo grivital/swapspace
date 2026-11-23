@@ -96,6 +96,8 @@ static const struct option options[] =
   "Give allocation attempts n seconds to settle" },
   { "daemon",		'd', at_none, 0, 0, set_daemon,
   "Run quietly in background" },
+  { "discard",		'D', at_none, 0, 0, set_discard,
+  "Ask the kernel to discard (TRIM) swap pages and files" },
   { "erase",		'e', at_none, 0, 0, set_erase,
   "Try to free up all swapfiles, then exit" },
   { "freetarget", 	'f', at_num,  2, 99, set_freetarget,
