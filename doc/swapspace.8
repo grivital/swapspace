@@ -161,6 +161,20 @@ Sending the \fBSIGUSR2\fR signal will make the program free all swapfiles that
 are not currently needed, and abstain from allocating any more for the timespan
 of one cooldown period.  The program will behave as if it just tried to create a
 swapfile but ran out of disk space.
+.PP
+Sending the \fBSIGHUP\fR signal makes the program re-read its configuration: it
+re-executes itself with the same arguments.  The swap directory lock is released
+by the exec and taken again by the new process, which adopts the swapfiles that
+are already active, so no swap is lost.  The process id does not change.  This is
+not supported with \fB\-\-daemon\fR, where a warning is logged and nothing happens;
+restart the daemon instead.
+.PP
+The new process exits if the configuration is no longer valid, so check it first
+with \fBswapspace \-i\fR; a service manager would otherwise restart the daemon
+in a loop while the reload itself appeared to succeed.  After a package upgrade the
+program file that was running may have been replaced or deleted, and a reload
+could then run the old, deleted binary or fail; restart the service instead of
+reloading it.
 .SH FILES
 \& /etc/init.d/swapspace
 \& /etc/swapspace.conf

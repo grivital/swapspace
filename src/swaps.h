@@ -93,6 +93,7 @@ bool swaps_check_config(void);
 #endif
 
 bool to_swapdir(void);
+bool back_to_swapdir(void);
 bool swapdir_config(void);
 
 #endif

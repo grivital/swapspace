@@ -17,7 +17,9 @@ boils down to `./configure && make && make install`
 Be sure to install the relevant initscript as well to have this run at startup.
 Swapspace ships a systemd unit file as `swapspace.service` that should be
 installed in `/etc/systemd/system/` or a SysVinit script as `swapspace.lsbinit`
-that should be installed in `/etc/init.d/` as just `swapspace`.
+that should be installed in `/etc/init.d/` as just `swapspace`.  With the systemd unit,
+`systemctl reload swapspace` validates the configuration (`swapspace -i`) and then
+makes the daemon re-read it (it handles `SIGHUP`; see `swapspace(8)`).
 
 If you installed to a non-standard location (not `/usr/local`), you'll
 have to update these init scripts to use the correct location.

@@ -217,6 +217,20 @@ bool to_swapdir(void)
 }
 
 
+/// Return to the swap directory after leaving it; the lock is still held
+/** Only valid after to_swapdir() succeeded, which left swappath absolute and canonical.
+ */
+bool back_to_swapdir(void)
+{
+  if (unlikely(chdir(swappath) == -1))
+  {
+    log_perr_str(LOG_ERR, "Could not return to swap directory", swappath, errno);
+    return false;
+  }
+  return true;
+}
+
+
 /// Configure permissions and attributes correctly on the swap directory
 bool swapdir_config(void) {
   int fd = open(swappath, O_RDONLY|O_DIRECTORY|O_NOFOLLOW);

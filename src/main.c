@@ -165,6 +165,35 @@ static void sighand_exit(int sig)
   stop = true;
 }
 
+/// Was a configuration reload requested (SIGHUP)?
+static volatile sig_atomic_t reload_requested = 0;
+
+/// Arguments as given to main(), kept so a reload can re-execute ourselves
+static char **saved_argv = NULL;
+
+/// Working directory at startup, restored before a reload (argv may hold relative paths)
+static char startdir[PATH_MAX];
+
+/// Signal handler that requests a configuration reload
+static void sighand_hup(int sig)
+{
+  reload_requested = true;
+}
+
+/// Block or unblock SIGHUP
+/** A reload re-executes the program, and the signal mask survives the exec.  Blocking
+ * SIGHUP across it keeps a second SIGHUP from killing the new process (default
+ * disposition) before install_sigs() has run; the new process unblocks it afterwards,
+ * and a pending SIGHUP is then delivered to the new handler.
+ */
+static void block_sighup(bool block)
+{
+  sigset_t hup;
+  sigemptyset(&hup);
+  sigaddset(&hup, SIGHUP);
+  sigprocmask(block ? SIG_BLOCK : SIG_UNBLOCK, &hup, NULL);
+}
+
 
 /// Write process id to pidfile if requested, and close it.  Clobbers localbuf.
 /**
@@ -231,7 +260,7 @@ static void install_sigs(void)
   // comes in again, we will probably just be terminated.  But that's not
   // unreasonable, come to think of it.
   install_sighandler(SIGTERM, sighand_exit);
-  install_sighandler(SIGHUP, sighand_exit);
+  install_sighandler(SIGHUP, sighand_hup);
 #ifdef SIGPWR
   install_sighandler(SIGPWR, sighand_exit);
 #endif
@@ -282,6 +311,9 @@ int main(int argc, char *argv[])
   // Standard error always defaults to unbuffered, so it is not changed.
   setlinebuf(stdout);
 
+  saved_argv = argv;
+  if (!getcwd(startdir, sizeof(startdir))) startdir[0] = '\0';
+
   if (!configure(argc, argv)) return EXIT_FAILURE;
 
   if (unlikely(!read_proc_swaps()) ||
@@ -292,6 +324,7 @@ int main(int argc, char *argv[])
   if (erase) return retire_all() ? EXIT_SUCCESS : EXIT_FAILURE;
 
   install_sigs();
+  block_sighup(false);
 
   if (unlikely(!startpidfile())) return EXIT_FAILURE;
 
@@ -352,6 +385,39 @@ int main(int argc, char *argv[])
   // Central loop
   for (++runclock; !stop; ++runclock)
   {
+    if (unlikely(reload_requested))
+    {
+      reload_requested = false;
+      /* Reload by re-executing ourselves with the same arguments, which re-reads
+       * the configuration file.  The swap directory lock is close-on-exec, so the
+       * new process can take it, and it adopts the swapfiles that are already
+       * active.  Re-executing a daemonized process would fork again, so that is
+       * not supported.
+       */
+      if (godaemon)
+        logm(LOG_WARNING, "Reload is not supported in daemon mode; restart instead");
+      else if (!saved_argv)
+        logm(LOG_WARNING, "Cannot reload: no saved arguments");
+      else
+      {
+        logm(LOG_NOTICE, "Reloading configuration");
+        if (startdir[0] && chdir(startdir) != 0)
+          log_perr(LOG_ERR, "Could not return to the starting directory", errno);
+        else
+        {
+          /* The pidfile is left alone: a stale pidfile is safe to overwrite and
+           * the new process rewrites it.
+           */
+          block_sighup(true);
+          execv("/proc/self/exe", saved_argv);
+          log_perr(LOG_ERR, "Could not re-execute for reload", errno);
+          block_sighup(false);
+          // Swap operations use relative names, so we must be back in the swap directory
+          if (!back_to_swapdir()) return EXIT_FAILURE;
+        }
+      }
+    }
+
     if (unlikely(print_status))		print_status = false,	dump_stats();
     else if (unlikely(adjust_swap))	adjust_swap = false,	request_diet();
     else 			        handle_requirements();

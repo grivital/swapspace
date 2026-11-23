@@ -9,6 +9,8 @@ Requires=swap.target
 [Service]
 Type=simple
 ExecStart=/usr/local/sbin/swapspace
+ExecReload=/usr/local/sbin/swapspace -i
+ExecReload=/bin/kill -HUP $MAINPID
 Restart=always
 RestartSec=30
 
