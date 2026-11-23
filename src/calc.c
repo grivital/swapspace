@@ -42,6 +42,21 @@ memsize_t ext_to_page(memsize_t n)
 }
 
 
+int pick_retirable(const memsize_t sizes[], const memsize_t used[], int count,
+    memsize_t maxsize)
+{
+  int best = -1;
+  for (int i = 0; i < count; ++i)
+  {
+    if (sizes[i] <= 0 || sizes[i] > maxsize) continue;
+    if (best < 0 || used[i] < used[best] ||
+        (used[i] == used[best] && sizes[i] >= sizes[best]))
+      best = i;
+  }
+  return best;
+}
+
+
 memsize_t ideal_swapsize(memsize_t totalspace, memsize_t freespace,
     int freetarget)
 {

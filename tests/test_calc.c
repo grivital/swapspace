@@ -38,6 +38,42 @@ int main(void)
   CHECK(ext_to_page(2*page) == 2*page);
   CHECK(ext_to_page(2*page+1) == 3*page);
 
+  // ---- Choosing the swapfile to retire: pick_retirable ----------------------
+  {
+    // Emptiest file wins; equal usage and size: the higher index.
+    const memsize_t s1[4] = { 0, 1000, 1000, 1000 };
+    const memsize_t u1[4] = { 0,  500,  100,  100 };
+    CHECK(pick_retirable(s1, u1, 4, 1000) == 3);
+
+    // Equal usage: the larger file wins.
+    const memsize_t s2[3] = { 0, 4000, 1000 };
+    const memsize_t u2[3] = { 0,  100,  100 };
+    CHECK(pick_retirable(s2, u2, 3, 4000) == 1);
+
+    // Usage beats size: a small empty file is preferred over a big used one.
+    const memsize_t s3[2] = { 2000, 1000 };
+    const memsize_t u3[2] = {  500,   10 };
+    CHECK(pick_retirable(s3, u3, 2, 2000) == 1);
+
+    // Files bigger than the allowance are never chosen.
+    const memsize_t s4[2] = { 5000, 1000 };
+    const memsize_t u4[2] = {    0,  900 };
+    CHECK(pick_retirable(s4, u4, 2, 1000) == 1);
+    CHECK(pick_retirable(s4, u4, 2, 500) == -1);
+
+    // Unused slots (size zero) are skipped; nothing retirable gives -1.
+    const memsize_t s5[3] = { 0, 0, 0 };
+    const memsize_t u5[3] = { 0, 0, 0 };
+    CHECK(pick_retirable(s5, u5, 3, 1000000) == -1);
+    CHECK(pick_retirable(s5, u5, 0, 1000000) == -1);
+
+    // A single file is chosen when it fits.
+    const memsize_t s6[1] = { 1024 };
+    const memsize_t u6[1] = { 1024 };
+    CHECK(pick_retirable(s6, u6, 1, 1024) == 0);
+    CHECK(pick_retirable(s6, u6, 1, 1023) == -1);
+  }
+
   // At the target, no adjustment is needed.
   CHECK(ideal_swapsize(100000, 30000, 30) == 0);
   CHECK(ideal_swapsize(100000, 50000, 50) == 0);

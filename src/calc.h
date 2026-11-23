@@ -30,6 +30,14 @@ memsize_t trunc_to_page(memsize_t n);
 /// Round n upwards to a multiple of memory page size
 memsize_t ext_to_page(memsize_t n);
 
+/// Pick the swapfile to retire: the emptiest one no larger than maxsize
+/** Ties go to the larger file, then to the higher index.  Entries with zero
+ * size are unused slots.
+ * @return index into the arrays, or -1 if nothing is retirable
+ */
+int pick_retirable(const memsize_t sizes[], const memsize_t used[], int count,
+    memsize_t maxsize);
+
 /// Recommended change in swap size to reach freetarget from a given state
 /** All sizes are in bytes.  A positive return value means "add this many
  * bytes of swap"; a negative one means "we have this much excess".

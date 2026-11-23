@@ -930,28 +930,24 @@ static bool retire_swapfile(int file)
 }
 
 
-/// Is given swapfile eligible for retirement?
-static bool retirable(int file, memsize_t maxsize)
-{
-  assert(file >= 0);
-  assert(file < MAX_SWAPFILES);
-  // TODO: Include usage in calculations?  Like "free the most unused space"?
-  return swapfiles[file].size && swapfiles[file].size <= maxsize;
-}
-
 
 /// Find a file to retire, or return MAX_SWAPFILES if none available
-/** Policy is to offer the largest swapfile that is not bigger than target.
+/** Policy is to offer the emptiest swapfile that is not bigger than target:
+ * retiring a file means swapoff, which must move every page still in it, so the
+ * file holding the fewest pages is the cheapest to retire.  Among equally used
+ * files the larger one wins; remaining ties go to the higher index.
  */
 static int find_retirable(memsize_t target)
 {
   if (!read_proc_swaps()) return MAX_SWAPFILES;
-  int best=MAX_SWAPFILES;
-  assert(!swapfiles[best].size);
+  memsize_t sizes[MAX_SWAPFILES], used[MAX_SWAPFILES];
   for (int i=0; i<MAX_SWAPFILES; ++i)
-    if (retirable(i, target) && swapfiles[i].size >= swapfiles[best].size)
-      best = i;
-  return best;
+  {
+    sizes[i] = swapfiles[i].size;
+    used[i] = swapfiles[i].used;
+  }
+  const int best = pick_retirable(sizes, used, MAX_SWAPFILES, target);
+  return (best < 0) ? MAX_SWAPFILES : best;
 }
 
 

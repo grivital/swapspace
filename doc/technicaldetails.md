@@ -29,8 +29,9 @@ time, the program reverts to the steady state.
 
 Overfed - significantly more virtual memory is available than is needed.  If
 this situation persists for a certain timeout period, the program deallocates
-one of its swap files and returns to the steady state.  If there's still too
-much swap space, the program may come straight back to this state.
+the swap file holding the fewest pages (the larger one if several are equally
+empty) among those no larger than the excess, and returns to the steady state.  If there's still too much swap space,
+the program may come straight back to this state.
 
 Diet - a recent allocation attempt has run into resource limits, e.g. because
 the filesystem used for swap files was full.  No more swapspace can be allocated

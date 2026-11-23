@@ -58,6 +58,8 @@ files for you.  These work just like partitions, except they're normal files.
 You can add more when you need them, or delete some when you want the disk space
 back.  And that is exactly what swapspace does.  It constantly monitors your
 system's virtual-memory needs and manages a pool of swap files accordingly.
+When swap is no longer needed it removes the emptiest swap file first, so that as few
+pages as possible have to move back into other swap.
 
 With swapspace you can install GNU/Linux in one single big partition, without
 regrets later about picking the wrong size.  Your system can handle the
