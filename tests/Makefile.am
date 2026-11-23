@@ -17,7 +17,7 @@ endif
 if NO_CONFIG
 TESTS = test_calc
 else
-TESTS = test_calc test_cli.sh
+TESTS = test_calc test_cli.sh test_options.sh
 endif
 
-EXTRA_DIST = test_cli.sh root-integration.sh
+EXTRA_DIST = test_cli.sh test_options.sh root-integration.sh

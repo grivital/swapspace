@@ -29,6 +29,7 @@ make install           # installs to /usr/local by default
 
 - `tests/test_calc` — unit tests for page rounding and `ideal_swapsize()` (`tests/test_calc.c` includes `src/calc.c` directly so it tests the exact daemon code).
 - `tests/test_cli.sh` — option handling, configuration validation, and the unprivileged `-e` path in a temporary directory. It is skipped in `--enable-noconfig` builds.
+- `tests/test_options.sh`: table-driven checks of every `options[]` entry through the configuration file and the command line (long, short, attached short), using `swapspace -i`. It fails if `src/opts.c` gains an option the test does not list. It is skipped in `--enable-noconfig` builds.
 
 `--enable-fuzzing` (clang only) builds `tests/fuzz_meminfo`, a libFuzzer harness for the `/proc/meminfo` parser, with ASan/UBSan coverage; run it with a corpus directory, e.g. `tests/fuzz_meminfo -max_total_time=60 corpus/`. CI (`.github/workflows/ci.yml`) covers gcc/clang in the default, noconfig and nodebug configurations, ASan/UBSan, a 30-second fuzz run, and `make distcheck`.
 
