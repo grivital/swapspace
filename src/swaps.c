@@ -71,6 +71,13 @@ static char swappath[PATH_MAX] = VARPREFIX"/lib/swapspace";
 static size_t swappath_len;
 
 
+/// Power-of-two defining how many active swapfiles to support
+/** Since swapspace allocates swapfiles of increasing sizes, there is probably
+ * little need for a large number of swapfile slots.
+ */
+#define MAXSWAPS_SHIFT 5
+#define MAX_SWAPFILES (1 << MAXSWAPS_SHIFT)
+
 /// Smallest allowed swapfile size
 static memsize_t min_swapsize = 4*MEGA;
 /// Largest allowed swapfile size
@@ -79,7 +86,15 @@ static memsize_t min_swapsize = 4*MEGA;
  */
 static memsize_t max_swapsize = 2*TERA;
 
+/// Swap priority of slot 0, or 0 to let the kernel choose
+static int file_priority = 0;
+
 #ifndef NO_CONFIG
+char *set_file_priority(long long priority)
+{
+  file_priority = (int)priority;
+  return NULL;
+}
 char *set_swappath(long long dummy)
 {
   return swappath;
@@ -109,6 +124,16 @@ bool swaps_check_config(void)
 {
   CHECK_CONFIG_ERR(min_swapsize > max_swapsize);
   CHECK_CONFIG_ERR(min_swapsize < 10*getpagesize());
+
+  if (!valid_file_priority(file_priority, MAX_SWAPFILES))
+  {
+    logm(LOG_ERR,
+	"file_priority must be 0 or between %d and %d, not %d",
+	MAX_SWAPFILES-1,
+	MAX_FILE_PRIORITY,
+	file_priority);
+    return false;
+  }
 
   if (swappath[0] != '/')
   {
@@ -303,15 +328,6 @@ struct Swapfile
   bool observed_in_wild;
 };
 
-static int sequence_number = 0;
-
-/// Power-of-two defining how many active swapfiles to support
-/** Since swapspace allocates swapfiles of increasing sizes, there is probably
- * little need for a large number of swapfile slots.
- */
-#define MAXSWAPS_SHIFT 5
-#define MAX_SWAPFILES (1 << MAXSWAPS_SHIFT)
-
 /// Array of swapfile descriptors
 /** The last element remains zeroed for use as a sentry.
  */
@@ -352,13 +368,6 @@ void dump_stats(void)
   }
 }
 
-
-
-/// Return next swapfile number after i
-static inline int inc_swapno(int i)
-{
-  return (i+1) % MAX_SWAPFILES;
-}
 
 
 /// Get filesystem info for swapdir, but retry once if interrupted by signal
@@ -411,18 +420,19 @@ memsize_t swapfs_size(void)
 
 /// Turn an existing file into an active swap.  Clobbers localbuf.
 /**
+ * @param slot swapfile number, which determines the swap priority
  * @param fault if not NULL, receives the errno value from a failed swapon(),
  *        or zero on success.  Logging may clobber errno, so callers must not
  *        rely on errno after this call.
  * @return Whether file was activated successfully.
  */
-static bool enable_swapfile(const char file[], int *fault)
+static bool enable_swapfile(const char file[], int slot, int *fault)
 {
   const int mkstatus = runcommand("mkswap", file);
   if (unlikely(mkstatus != 0))
     logm(LOG_WARNING, "mkswap failed for '%s' (status %d)", file, mkstatus);
 
-  if (unlikely(swapon(file, 0) != 0))
+  if (unlikely(swapon(file, swapon_flags(file_priority, slot)) != 0))
   {
     const int err = errno;
     if (fault) *fault = err;
@@ -686,7 +696,8 @@ bool activate_old_swaps(void)
       }
 
       int err = 0;
-      if (likely(size >= min_swapsize && enable_swapfile(d->d_name, &err)))
+      if (likely(size >= min_swapsize &&
+	    enable_swapfile(d->d_name, seqno, &err)))
       {
 	swapfiles[seqno].size = size;
       }
@@ -895,8 +906,11 @@ static bool retire_swapfile(int file)
    * filename, if we are able to delete the file then we won't be able to
    * deactivate it without disabling swapping altogether.
    *
-   * Finally, we also need to avoid reusing names of deleted swapfiles while
-   * they are still in use or things would get horribly confused.
+   * A retired name may be reused at once: the file is unlinked only after
+   * libc swapoff() succeeded, and any paranoid wipe runs synchronously
+   * through the open descriptor.  A failed libc swapoff() leaves the slot
+   * marked as taken.  The fallback swapoff() in support.c does not report
+   * failure as -1, which predates this change.
    */
   char namebuf[30];
   snprintf(namebuf, sizeof(namebuf), "%d", file);
@@ -966,18 +980,6 @@ bool retire_all(void)
 }
 
 
-/// Find a free swapfile slot, or return last if none available
-static int find_free(int last)
-{
-  assert(last >= 0);
-  assert(last < MAX_SWAPFILES);
-  int i;
-  for (i = last+1; i < MAX_SWAPFILES && swapfiles[i].size; ++i);
-  if (i >= MAX_SWAPFILES) for (i = 0; i < last && swapfiles[i].size; ++i);
-  return i;
-}
-
-
 bool alloc_swapfile(memsize_t size)
 {
   /* Round request to page size, then add a bit for swapfile overhead.  Clever
@@ -998,8 +1000,10 @@ bool alloc_swapfile(memsize_t size)
    */
   if (unlikely(size > max_swapsize)) size = max_swapsize;
 
-  const int newswap = find_free(sequence_number);
-  if (unlikely(swapfiles[newswap].size))
+  memsize_t sizes[MAX_SWAPFILES];
+  for (int i=0; i<MAX_SWAPFILES; ++i) sizes[i] = swapfiles[i].size;
+  const int newswap = lowest_free_slot(sizes, MAX_SWAPFILES);
+  if (unlikely(newswap < 0))
   {
     // No free slot.  Turn to "diet" policy instead of retrying every second.
     request_diet();
@@ -1027,7 +1031,7 @@ bool alloc_swapfile(memsize_t size)
   }
 
   int err = 0;
-  if (unlikely(!enable_swapfile(file, &err)))
+  if (unlikely(!enable_swapfile(file, newswap, &err)))
   {
     unlink(file);
     swapfiles[newswap].size = 0;
@@ -1048,7 +1052,6 @@ bool alloc_swapfile(memsize_t size)
 
   swapfiles[newswap].created = runclock;
   swapfiles[newswap].used = 0;
-  sequence_number = inc_swapno(sequence_number);
 
   return true;
 }

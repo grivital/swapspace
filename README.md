@@ -91,6 +91,18 @@ already in use.  But that is of course the price you pay for virtual memory:
 slower but cheaper.  If your system is too slow because there's not enough
 memory, the ultimate answer is still: try to use less or buy more!
 
+Swap priority
+-------------
+
+By default the kernel decides: recent kernels give all swapfiles one priority
+and fill them evenly, older ones give each a lower automatic priority and fill
+them in activation order.  Set `file_priority` (see `swapspace.conf`) to make
+them fill in slot order, lowest number first.  This is the file's number, not
+its age, because a new file takes the lowest free number.  Retirement does not
+use the slot order; it still picks the largest file that is not bigger than the
+excess.  Explicit priorities outrank swap with automatic priority, such as a
+partition added without `pri=`.
+
 See also
 --------
 Home page: https://github.com/Tookmund/swapspace

@@ -75,6 +75,14 @@ Run quietly in the background.  This is the normal way to run the program.
 Attempt to free up all allocated swap files.  Returns 0 if all files were
 successfully erased, or 1 otherwise.
 .TP
+\fB\-F\fR \fIp\fR, \fB\-\-file_priority\fR=\fIp\fR
+Give swapfile 0 swap priority \fIp\fR and each later file one less, so the
+kernel fills lower-numbered files first.  The default, 0, leaves the priority
+to the kernel.  Otherwise \fIp\fR must be at least 31 (so that no file ends up
+with a negative priority) and at most 32767.  See
+.B SWAP PRIORITY
+below.
+.TP
 \fB\-f\fR \fIp\fR, \fB\-\-freetarget\fR=\fIp\fR
 Aim to have \fIp\fR% of combined memory and swap space free.
 .TP
@@ -152,6 +160,27 @@ program you would run on a hard-realtime system.
 Any messages are sent to the system daemon log; it is also printed to the
 standard output/error streams (as appropriate based on the urgency of each
 individual message) if available.
+.SH "SWAP PRIORITY"
+Swapfiles are named by slot number, 0 to 31, and a new file takes the lowest
+free slot.  Without
+.BR file_priority ,
+the kernel decides: recent kernels give all swapfiles one priority and use them
+evenly, older ones give each a lower automatic priority and fill them in
+activation order.  With it, slot \fIn\fR gets priority \fIp\fR\-\fIn\fR,
+so lower slots fill first.  This is slot order, not creation order: a freed low
+slot is reused, so the newest file can be the fullest.  Retirement does not
+use the slot order; it still picks the largest file that is not bigger than the
+excess.
+.PP
+Kernel priorities run from 0 to 32767, higher first.  Explicit priorities
+outrank swap areas with automatic (negative) priority, such as a partition added
+without
+.BR pri= ,
+so enabling the option changes the order relative to those.  zram is typically
+set to 100: a \fIp\fR below 100 keeps swapfiles after zram, 100 to 131 makes
+some slots share priority 100 with it (the kernel alternates between equal
+priorities), and 132 or more keeps every swapfile above it.  Swapfiles that
+are already active when swapspace starts keep their priority.
 .SH SIGNALS
 State information can be logged by sending the program the \fBSIGUSR1\fR signal
 (user-defined signal 1).  Not all of this information will always be current;

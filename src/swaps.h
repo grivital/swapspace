@@ -83,6 +83,7 @@ memsize_t swapfs_free(void);
 /// Try to guard against attacker getting unguarded access to the disk?
 extern bool paranoid;
 
+char *set_file_priority(long long priority);
 char *set_min_swapsize(long long size);
 char *set_max_swapsize(long long size);
 char *set_swappath(long long dummy);

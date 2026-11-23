@@ -81,6 +81,50 @@ int main(void)
   // values near LLONG_MAX.
   CHECK(parse_cgroup_limit("9223372036854771712\n", &cg));
 
+  // Lowest free swapfile slot.
+  {
+    memsize_t slots[4] = { 0, 0, 0, 0 };
+    CHECK(lowest_free_slot(slots, 4) == 0);
+    slots[0] = 1;
+    CHECK(lowest_free_slot(slots, 4) == 1);
+    slots[1] = slots[3] = 1;
+    CHECK(lowest_free_slot(slots, 4) == 2);
+    slots[2] = 1;
+    CHECK(lowest_free_slot(slots, 4) == -1);
+    slots[0] = 0;
+    CHECK(lowest_free_slot(slots, 4) == 0);
+    // Only the first n entries count: the slot at index n is a sentinel.
+    slots[3] = 0;
+    CHECK(lowest_free_slot(slots, 3) == 0);
+    slots[0] = 1;
+    CHECK(lowest_free_slot(slots, 3) == -1);
+    CHECK(lowest_free_slot(slots, 0) == -1);
+  }
+
+  // File priority validation: zero, or enough headroom for nslots slots.
+  CHECK(valid_file_priority(0, 32));
+  CHECK(!valid_file_priority(1, 32));
+  CHECK(!valid_file_priority(30, 32));
+  CHECK(valid_file_priority(31, 32));
+  CHECK(valid_file_priority(100, 32));
+  CHECK(valid_file_priority(32767, 32));
+  CHECK(!valid_file_priority(32768, 32));
+  CHECK(!valid_file_priority(-1, 32));
+  CHECK(valid_file_priority(1, 2));
+  CHECK(!valid_file_priority(1, 3));
+
+  // Default keeps the kernel's own choice for every slot.
+  CHECK(swapon_flags(0, 0) == 0);
+  CHECK(swapon_flags(0, 31) == 0);
+  // Slot n is n below slot 0; the lowest slot never goes negative.
+  CHECK(swapon_flags(31, 0) == (SWAP_FLAG_PREFER | 31));
+  CHECK(swapon_flags(31, 31) == SWAP_FLAG_PREFER);
+  CHECK(swapon_flags(100, 0) == (SWAP_FLAG_PREFER | 100));
+  CHECK(swapon_flags(100, 5) == (SWAP_FLAG_PREFER | 95));
+  CHECK(swapon_flags(32767, 0) == (SWAP_FLAG_PREFER | 32767));
+  CHECK(swapon_flags(32767, 31) == (SWAP_FLAG_PREFER | 32736));
+  CHECK((swapon_flags(32767, 0) & SWAP_FLAG_PRIO_MASK) == 32767);
+
   if (failures) fprintf(stderr, "%d check(s) failed\n", failures);
   return failures ? 1 : 0;
 }

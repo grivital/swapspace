@@ -25,6 +25,7 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA
 #include <stdio.h>
 #include <stdlib.h>
 
+#include <sys/swap.h>
 #include <sys/wait.h>
 
 #include "log.h"
@@ -35,6 +36,14 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA
 /// Replacement function for system function.  Clobbers localbuf.
 int swapon(const char path[], int flags)
 {
+  if (flags & SWAP_FLAG_PREFER)
+  {
+    // The format is built here so the priority reaches swapon's -p option.
+    char format[40];
+    snprintf(format, sizeof(format), "%%s -p %d '%%s'",
+	(flags & SWAP_FLAG_PRIO_MASK) >> SWAP_FLAG_PRIO_SHIFT);
+    return runcommandformat(format, "/sbin/swapon", path);
+  }
   return runcommand("/sbin/swapon", path);
 }
 #endif

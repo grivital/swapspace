@@ -63,6 +63,29 @@ if "$BIN" -i -c "$TMP/badpsi.conf" >/dev/null 2>&1; then
   fail "out-of-range psi_threshold accepted"
 fi
 
+# file_priority is 0 (kernel default) or 31 (one per swapfile slot, so none goes
+# negative) up to the kernel's maximum of 32767.
+for prio in 0 31 100 32767; do
+  printf 'swappath = "%s"\nfile_priority = %s\n' "$TMP" "$prio" \
+    >"$TMP/prio.conf"
+  "$BIN" -i -c "$TMP/prio.conf" >/dev/null 2>&1 ||
+    fail "valid file_priority $prio rejected"
+done
+for prio in 1 30 32768 -1; do
+  printf 'swappath = "%s"\nfile_priority = %s\n' "$TMP" "$prio" \
+    >"$TMP/prio.conf"
+  if "$BIN" -i -c "$TMP/prio.conf" >/dev/null 2>&1; then
+    fail "invalid file_priority $prio accepted"
+  fi
+done
+
+# The command line takes the same range checks.
+"$BIN" -i -c "$TMP/good.conf" -F 31 >/dev/null 2>&1 ||
+  fail "-F 31 rejected"
+if "$BIN" -i -c "$TMP/good.conf" -F 30 >/dev/null 2>&1; then
+  fail "-F 30 accepted"
+fi
+
 cat >"$TMP/syntax.conf" <<EOF
 this is not valid
 EOF

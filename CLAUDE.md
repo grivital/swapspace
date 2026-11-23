@@ -63,7 +63,7 @@ Key invariants and conventions:
 - **`env.h` must be included first in every `.c` file**, before any system header, to enable large-file support. Use the `SEEK()` macro from it rather than calling `lseek` directly.
 - **`localbuf`** is a shared 16 KB scratch buffer declared in `main.c`. Many functions are documented as "clobbers localbuf"; do not assume its contents survive a call, and avoid nested use.
 - **No dynamic allocation after startup.** Swapspace must keep working when the system is out of memory, so it deliberately uses fixed arrays and the static buffer. New code should follow this constraint.
-- Swap files live directly in the swap directory and are named by decimal sequence number (`0`, `1`, ...). `MAX_SWAPFILES` is 32 (`1 << 5`); slot `MAX_SWAPFILES` is a zeroed sentinel. Size class grows as files are allocated.
+- Swap files live directly in the swap directory and are named by decimal slot number (`0`, `1`, ...); a new file takes the lowest free slot (`lowest_free_slot()` in `src/calc.c`). `MAX_SWAPFILES` is 32 (`1 << 5`); slot `MAX_SWAPFILES` is a zeroed sentinel. With `file_priority` set, slot n is enabled with swap priority P-n (`swapon_flags()` in `src/calc.c`). Size class grows as files are allocated.
 - An exclusive `flock()` on `.swapspace.lock` in the swap directory keeps instances from overlapping; it is held for the process lifetime and the file is never unlinked (that would defeat the lock). Because of this, a stale pidfile is safe to overwrite.
 - `/proc/swaps` reports sizes in 1 KB units; the parser converts them with `KILO`.
 - Swap directory operations run with the process `chdir`'d into the directory (`to_swapdir()`), so file names are relative.

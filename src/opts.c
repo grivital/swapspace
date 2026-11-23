@@ -32,6 +32,7 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA
 
 #include <sys/param.h>
 
+#include "calc.h"
 #include "memory.h"
 #include "opts.h"
 #include "support.h"
@@ -98,6 +99,8 @@ static const struct option options[] =
   "Run quietly in background" },
   { "erase",		'e', at_none, 0, 0, set_erase,
   "Try to free up all swapfiles, then exit" },
+  { "file_priority",	'F', at_num,  0, MAX_FILE_PRIORITY, set_file_priority,
+  "Give swapfile 0 priority n, later files lower (0: kernel default)" },
   { "freetarget", 	'f', at_num,  2, 99, set_freetarget,
   "Aim for n% of available space" },
   { "help",		'h', at_none, 0, 0, set_help,
