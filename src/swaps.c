@@ -301,6 +301,8 @@ struct Swapfile
   long long created;
   /// Has this swapfile been spotted in /proc/swaps?
   bool observed_in_wild;
+  /// Name exists in the swap directory but is not ours; never allocate it
+  bool occupied;
 };
 
 static int sequence_number = 0;
@@ -682,6 +684,7 @@ bool activate_old_swaps(void)
 	  logm(LOG_NOTICE, "Skipping swapfile '%s' of unknown size",
 	      d->d_name);
 #endif
+	swapfiles[seqno].occupied = true;
 	continue;
       }
 
@@ -697,13 +700,16 @@ bool activate_old_swaps(void)
 	 */
 	logm(LOG_NOTICE, "Swapfile '%s' is busy; leaving it in place",
 	    d->d_name);
+	swapfiles[seqno].occupied = true;
       }
       else
       {
 #ifndef NO_CONFIG
 	if (!quiet) logm(LOG_NOTICE, "Deleting unusable swapfile '%d'", seqno);
 #endif
-	unlink(d->d_name);
+	/* A name we cannot remove still blocks its slot. */
+	if (unlink(d->d_name) == -1 && errno != ENOENT)
+	  swapfiles[seqno].occupied = true;
       }
     }
   }
@@ -841,6 +847,7 @@ static int get_swapfile_status(FILE *fp, struct swapfile_info *result)
 
       swapfiles[result->seqno].size = result->size;
       swapfiles[result->seqno].used = result->used;
+      swapfiles[result->seqno].occupied = false;
       swapfiles[result->seqno].observed_in_wild = true;
       return 1;
     }
@@ -966,15 +973,15 @@ bool retire_all(void)
 }
 
 
-/// Find a free swapfile slot, or return last if none available
+/// Find a free swapfile slot, or return MAX_SWAPFILES if none available
 static int find_free(int last)
 {
   assert(last >= 0);
   assert(last < MAX_SWAPFILES);
-  int i;
-  for (i = last+1; i < MAX_SWAPFILES && swapfiles[i].size; ++i);
-  if (i >= MAX_SWAPFILES) for (i = 0; i < last && swapfiles[i].size; ++i);
-  return i;
+  bool taken[MAX_SWAPFILES];
+  for (int i=0; i<MAX_SWAPFILES; ++i)
+    taken[i] = swapfiles[i].size || swapfiles[i].occupied;
+  return next_free_slot(taken, MAX_SWAPFILES, last);
 }
 
 
@@ -999,7 +1006,7 @@ bool alloc_swapfile(memsize_t size)
   if (unlikely(size > max_swapsize)) size = max_swapsize;
 
   const int newswap = find_free(sequence_number);
-  if (unlikely(swapfiles[newswap].size))
+  if (unlikely(newswap >= MAX_SWAPFILES))
   {
     // No free slot.  Turn to "diet" policy instead of retrying every second.
     request_diet();

@@ -4,6 +4,12 @@ AM_CPPFLAGS = -I$(top_srcdir)/src
 check_PROGRAMS = test_calc
 test_calc_SOURCES = test_calc.c
 
+check_PROGRAMS += test_swaps
+test_swaps_SOURCES = test_swaps.c
+test_swaps_CPPFLAGS = $(AM_CPPFLAGS) -DVARPREFIX='"/var"' -DETCPREFIX='"/etc"'
+test_swaps_LDADD = $(top_builddir)/src/calc.$(OBJEXT) \
+                   $(top_builddir)/src/log.$(OBJEXT)
+
 if FUZZING
 check_PROGRAMS += fuzz_meminfo
 fuzz_meminfo_SOURCES = fuzz_meminfo.c
@@ -15,9 +21,9 @@ fuzz_meminfo_LDADD = $(top_builddir)/src/memory.$(OBJEXT) \
 endif
 
 if NO_CONFIG
-TESTS = test_calc
+TESTS = test_calc test_swaps
 else
-TESTS = test_calc test_cli.sh
+TESTS = test_calc test_swaps test_cli.sh
 endif
 
 EXTRA_DIST = test_cli.sh root-integration.sh

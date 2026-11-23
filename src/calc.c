@@ -150,3 +150,14 @@ bool parse_psi_line(const char line[], int *percent)
   *percent = (int)value;
   return true;
 }
+
+
+int next_free_slot(const bool taken[], int nslots, int last)
+{
+  for (int k=1; k<=nslots; ++k)
+  {
+    const int i = (last+k) % nslots;
+    if (!taken[i]) return i;
+  }
+  return nslots;
+}

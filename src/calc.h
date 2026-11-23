@@ -49,4 +49,12 @@ bool parse_psi_line(const char line[], int *percent);
 /** @return false for "max", negative values, or malformed input */
 bool parse_cgroup_limit(const char text[], memsize_t *limit);
 
+/// Pick the next free swapfile slot after last, wrapping round
+/** @param taken per-slot flag: true if the slot must not be allocated
+ * @param nslots number of entries in taken
+ * @param last slot allocated most recently, 0 <= last < nslots
+ * @return a slot index, or nslots if every slot is taken
+ */
+int next_free_slot(const bool taken[], int nslots, int last);
+
 #endif

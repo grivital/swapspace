@@ -81,6 +81,27 @@ int main(void)
   // values near LLONG_MAX.
   CHECK(parse_cgroup_limit("9223372036854771712\n", &cg));
 
+  /* Slot choice after startup.  Slot 2 is a busy swapfile and slot 5 a FIFO
+   * that activate_old_swaps() left in place; neither may ever be chosen, or
+   * make_swapfile() would unlink an active swapfile or wedge on EEXIST.
+   */
+  bool taken[8] = { false, false, true, false, false, true, false, false };
+  CHECK(next_free_slot(taken, 8, 1) == 3);
+  CHECK(next_free_slot(taken, 8, 4) == 6);
+  CHECK(next_free_slot(taken, 8, 7) == 0);
+  for (int round = 0, last = 0; round < 40; ++round)
+  {
+    last = next_free_slot(taken, 8, last);
+    CHECK(last >= 0 && last < 8 && last != 2 && last != 5);
+  }
+  // Only the slot just used is free: the search wraps round to reuse it.
+  bool one[4] = { true, true, false, true };
+  CHECK(next_free_slot(one, 4, 2) == 2);
+  CHECK(next_free_slot(one, 4, 0) == 2);
+  // Every slot taken: report that no slot is available.
+  bool full[4] = { true, true, true, true };
+  CHECK(next_free_slot(full, 4, 3) == 4);
+
   if (failures) fprintf(stderr, "%d check(s) failed\n", failures);
   return failures ? 1 : 0;
 }
