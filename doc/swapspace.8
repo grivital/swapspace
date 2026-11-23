@@ -78,6 +78,33 @@ successfully erased, or 1 otherwise.
 \fB\-f\fR \fIp\fR, \fB\-\-freetarget\fR=\fIp\fR
 Aim to have \fIp\fR% of combined memory and swap space free.
 .TP
+\fB\-F\fR \fIsize\fR, \fB\-\-min_free_swap\fR=\fIsize\fR
+Keep at least \fIsize\fR bytes of swap free, instead of using percentages.  When
+this is non-zero, \fBswapspace\fR adds swapfiles when free swap drops below
+\fIsize\fR (aiming for the middle of the band between \fImin_free_swap\fR and
+\fImax_free_swap\fR) and removes swapfiles only when more than
+\fImax_free_swap\fR is free.  The \fBlower_freelimit\fR, \fBupper_freelimit\fR
+and \fBfreetarget\fR percentages are then not used for the swap decision.
+Memory pressure (see \fBpsi_threshold\fR) still tops up swap and still blocks
+removal.  Zero, the default, selects the percentage mode.  The largest accepted
+value is a quarter of the largest 64-bit signed integer.
+.PP
+"Free swap" is the kernel's \fBSwapFree\fR figure, so it counts all active swap,
+including zram and swap partitions, not only swapspace's own files.  When
+\fBswapspace\fR runs in a cgroup with a swap limit, it is instead the remaining
+swap of that cgroup, which new swapfiles cannot raise: a \fImin_free_swap\fR above
+that limit makes the program keep allocating swapfiles until it runs out of swap
+slots or disk space.  The smallest swapfile the filesystem must be able to hold is
+the amount added at the lower edge of the band, half the width of the band, not
+\fImin_free_swap\fR itself, so the program also starts where zram already provides
+the minimum.
+.TP
+\fB\-G\fR \fIsize\fR, \fB\-\-max_free_swap\fR=\fIsize\fR
+With \fImin_free_swap\fR: remove swapfiles when more than \fIsize\fR bytes of swap
+are free.  Defaults to one and a half times \fImin_free_swap\fR.  It requires
+\fImin_free_swap\fR to be set, and \fBswapspace\fR refuses to start with
+\fImax_free_swap\fR alone.  The same upper limit applies as for \fImin_free_swap\fR.
+.TP
 \fB\-h\fR, \fB\-\-help\fR
 Display usage information and exit.
 .TP
@@ -152,6 +179,22 @@ program you would run on a hard-realtime system.
 Any messages are sent to the system daemon log; it is also printed to the
 standard output/error streams (as appropriate based on the urgency of each
 individual message) if available.
+.SH EXAMPLES
+Keep between 6 and 8 GiB of swap free, in swapfiles of 1 GiB, ask the kernel to
+discard freed swap, and use a directory on the same filesystem as the swapfiles
+can live on (on btrfs a subvolume that is not snapshotted):
+.PP
+.nf
+swappath="/swap/swapspace"
+min_free_swap=6g
+max_free_swap=8g
+min_swapsize=1g
+max_swapsize=1g
+discard
+.fi
+.PP
+Free swap includes swap on other devices such as zram, so the band counts what
+is free in total, not only in swapspace's own files.
 .SH SIGNALS
 State information can be logged by sending the program the \fBSIGUSR1\fR signal
 (user-defined signal 1).  Not all of this information will always be current;

@@ -55,6 +55,15 @@ static int cache_elasticity=80;
 /** Zero disables PSI-based allocation triggers. */
 static int psi_threshold=10;
 
+/// Configuration item: keep at least this many bytes of swap free (0 = off)
+/** When non-zero, swap sizing follows these absolute byte amounts and the
+ * percentage limits above are not used for the swap decision.  Swap is added
+ * when free swap falls below this, aiming for the middle of the band. */
+static memsize_t min_free_swap=0;
+/// Configuration item: release swapfiles when free swap exceeds this many bytes
+/** Zero means one and a half times min_free_swap. */
+static memsize_t max_free_swap=0;
+
 // Track whether MemAvailable is present in /proc/meminfo
 static bool kernel_mem_available = false;
 
@@ -89,9 +98,22 @@ char *set_psi_threshold(long long pct)
   psi_threshold = (int)pct;
   return NULL;
 }
+char *set_min_free_swap(long long bytes)
+{
+  min_free_swap = bytes;
+  return NULL;
+}
+char *set_max_free_swap(long long bytes)
+{
+  max_free_swap = bytes;
+  return NULL;
+}
 
 bool memory_check_config(void)
 {
+  CHECK_CONFIG_ERR(max_free_swap > 0 && min_free_swap == 0);
+  CHECK_CONFIG_ERR(min_free_swap > 0 && max_free_swap > 0 &&
+      max_free_swap < min_free_swap);
   CHECK_CONFIG_ERR(lower_freelimit > upper_freelimit);
   CHECK_CONFIG_ERR(freetarget < lower_freelimit);
   CHECK_CONFIG_ERR(freetarget > upper_freelimit);
@@ -596,7 +618,6 @@ memsize_t memory_target(void)
   if (unlikely(!read_proc_meminfo(&st))) return MEMSIZE_ERROR;
 
   const int freepct = pct_free(&st);
-  memsize_t request = 0;
 
   /* Ask the kernel whether tasks are actually stalling.  PSI is a much more
    * direct signal than our free-memory estimate, so under pressure we steer
@@ -606,16 +627,16 @@ memsize_t memory_target(void)
   const bool pressure =
     (psi_threshold > 0) && read_psi(&psi) && (psi >= psi_threshold);
 
-  // Policy: once we hit either freelimit, steer for "freetarget"% free space
+  /* Absolute mode: keep a fixed number of bytes of swap free, independent of
+   * the percentage limits (see absolute_swap_request()).
+   */
+  if (min_free_swap > 0)
+    return absolute_swap_request(st.SwapFree, min_free_swap, max_free_swap,
+        pressure);
+
   // TODO: Use /proc/sys/vm/min_free_kbytes when no swap yet allocated?
-  if (freepct < lower_freelimit || freepct > upper_freelimit ||
-      (pressure && freepct <= freetarget))
-    request = ideal_swapsize(space_total(&st), space_free(&st), freetarget);
-
-  // Freeing swap while tasks are stalling would only make things worse.
-  if (pressure && request < 0) request = 0;
-
-  return request;
+  return percent_swap_request(space_total(&st), space_free(&st), freepct,
+      lower_freelimit, upper_freelimit, freetarget, pressure);
 }
 
 
@@ -623,6 +644,12 @@ memsize_t minimal_swapfile(void)
 {
   struct memstate st = { 0 };
   if (unlikely(!read_proc_meminfo(&st))) return MEMSIZE_ERROR;
+
+  /* Absolute mode: what would be added at the lower edge of the band.  The floor
+   * itself is no requirement, since other swap (zram) may already provide it.
+   */
+  if (min_free_swap > 0)
+    return absolute_min_swapfile(min_free_swap, max_free_swap);
 
   const memsize_t total = space_total(&st);
   // Compute desired swapfile size if we're exactly at lower_freelimit

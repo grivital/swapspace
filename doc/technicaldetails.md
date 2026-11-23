@@ -58,3 +58,27 @@ v1 `memory.limit_in_bytes`), that limit replaces `MemTotal`, free space is
 derived from the cgroup's current usage, and the cgroup's own swap accounting
 is used where available.  The percentage thresholds then apply to the
 cgroup's budget instead of the host's.
+
+Absolute free-swap mode
+-----------------------
+
+With `min_free_swap` set, the percentage limits are not used.  Free swap is
+compared with the band from `min_free_swap` to `max_free_swap` (by default one
+and a half times the minimum).  Below the band, swapspace allocates enough to
+reach the middle of the band; above it, the same amount is reported as excess
+and the overfed state retires files.  Under memory pressure swapspace also tops
+up while below the middle of the band, and never frees swap.
+
+"Free swap" is the kernel's `SwapFree`, so it includes zram and swap partitions,
+not just swapspace's own files.  Inside a cgroup with a swap limit it is the
+cgroup's remaining swap, which new swapfiles cannot raise: if `min_free_swap` is
+above that limit, swapspace keeps allocating until it runs out of swap slots or
+disk space.  The smallest swapfile the swap filesystem must be able to hold is the
+amount added at the lower edge of the band (half its width), not `min_free_swap`
+itself, so startup works when zram already provides the minimum.  `max_free_swap`
+alone is a configuration error, and both values are limited to a quarter of the
+largest 64-bit signed integer so that the band arithmetic cannot overflow.
+
+The kernel allows only a limited number of swap areas (32 on current kernels),
+so with a small max_swapsize the amount of swap this mode can keep free is
+bounded by that number times the file size.

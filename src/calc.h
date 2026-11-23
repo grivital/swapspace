@@ -49,4 +49,28 @@ bool parse_psi_line(const char line[], int *percent);
 /** @return false for "max", negative values, or malformed input */
 bool parse_cgroup_limit(const char text[], memsize_t *limit);
 
+/// Swap adjustment wanted in percentage mode (lower/upper limits and target)
+/** @param freepct free space as a percentage of totalspace
+ * @param pressure whether memory pressure (PSI) is above its threshold
+ * @return bytes to add (positive) or excess (negative); zero inside the band
+ */
+memsize_t percent_swap_request(memsize_t totalspace, memsize_t freespace,
+    int freepct, int lower_freelimit, int upper_freelimit, int freetarget,
+    bool pressure);
+
+/// Swap adjustment wanted in absolute mode (min_free_swap / max_free_swap bytes)
+/** The band is [min_free, max_free]; max_free of zero means 1.5 times min_free
+ * (saturating at LLONG_MAX).
+ * Outside the band we steer for its middle.  Under pressure we also top up while
+ * below the middle, and never release.  Returns zero when min_free is zero.
+ */
+memsize_t absolute_swap_request(memsize_t freeswap, memsize_t min_free,
+    memsize_t max_free, bool pressure);
+
+/// Smallest useful swapfile in absolute mode
+/** The amount that would be added when free swap sits exactly at min_free, i.e.
+ * the gap to the middle of the band.  Zero when min_free is zero.
+ */
+memsize_t absolute_min_swapfile(memsize_t min_free, memsize_t max_free);
+
 #endif

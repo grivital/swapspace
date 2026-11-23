@@ -65,6 +65,8 @@ memsize_t minimal_swapfile(void);
 void dump_memory(void);
 
 #ifndef NO_CONFIG
+char *set_min_free_swap(long long bytes);
+char *set_max_free_swap(long long bytes);
 char *set_lower_freelimit(long long pct);
 char *set_upper_freelimit(long long pct);
 char *set_freetarget(long long pct);

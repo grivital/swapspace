@@ -75,6 +75,10 @@ Written by Jeroen T. Vermeulen.
 
 Maintained by Jacob Adams.
 
+By default swapspace keeps a percentage of memory plus swap free.  To keep a fixed
+number of bytes of swap free instead, set `min_free_swap` (and optionally
+`max_free_swap`); see `swapspace(8)` for an example.
+
 When not to use it
 ------------------
 

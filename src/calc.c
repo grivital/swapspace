@@ -23,6 +23,7 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA
 
 #include <ctype.h>
 #include <errno.h>
+#include <limits.h>
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
@@ -149,4 +150,58 @@ bool parse_psi_line(const char line[], int *percent)
   if (value > 100) value = 100;
   *percent = (int)value;
   return true;
+}
+
+
+memsize_t percent_swap_request(memsize_t totalspace, memsize_t freespace,
+    int freepct, int lower_freelimit, int upper_freelimit, int freetarget,
+    bool pressure)
+{
+  memsize_t request = 0;
+
+  // Policy: once we hit either freelimit, steer for "freetarget"% free space.
+  // Under memory pressure we also steer there while at or below the target.
+  if (freepct < lower_freelimit || freepct > upper_freelimit ||
+      (pressure && freepct <= freetarget))
+    request = ideal_swapsize(totalspace, freespace, freetarget);
+
+  // Freeing swap while tasks are stalling would only make things worse.
+  if (pressure && request < 0) request = 0;
+
+  return request;
+}
+
+
+/// Upper edge of the free-swap band: max_free, or 1.5 times min_free when zero
+/** The default saturates at LLONG_MAX instead of overflowing. */
+static memsize_t absolute_max_free(memsize_t min_free, memsize_t max_free)
+{
+  if (max_free > 0) return max_free;
+  const memsize_t half = min_free / 2;
+  return (min_free > LLONG_MAX - half) ? LLONG_MAX : min_free + half;
+}
+
+
+memsize_t absolute_swap_request(memsize_t freeswap, memsize_t min_free,
+    memsize_t max_free, bool pressure)
+{
+  if (min_free <= 0) return 0;
+
+  const memsize_t maxfree = absolute_max_free(min_free, max_free);
+  const memsize_t target = min_free + (maxfree - min_free) / 2;
+
+  memsize_t request = 0;
+  if (freeswap < min_free || (pressure && freeswap < target) ||
+      freeswap > maxfree)
+    request = target - freeswap;
+
+  if (pressure && request < 0) request = 0;
+  return request;
+}
+
+
+memsize_t absolute_min_swapfile(memsize_t min_free, memsize_t max_free)
+{
+  if (min_free <= 0) return 0;
+  return (absolute_max_free(min_free, max_free) - min_free) / 2;
 }
