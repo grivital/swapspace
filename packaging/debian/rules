@@ -1,0 +1,34 @@
+#!/usr/bin/make -f
+
+export DEB_BUILD_MAINT_OPTIONS = hardening=+all
+
+%:
+	dh $@
+
+override_dh_auto_configure:
+	dh_auto_configure -- --prefix=/usr --sysconfdir=/etc \
+		--localstatedir=/var --sbindir=/usr/sbin
+
+override_dh_auto_install:
+	dh_auto_install
+	install -Dm644 debian/swapspace-tmpfiles.conf \
+		debian/swapspace/usr/lib/tmpfiles.d/swapspace.conf
+
+# "make install" skips the unit, and upstream points it at /usr/local/sbin.
+# Installed but not enabled or started: that is left to the admin.
+override_dh_installsystemd:
+	sed 's|/usr/local/sbin/swapspace|/usr/sbin/swapspace|' swapspace.service \
+		> debian/swapspace.service
+	dh_installsystemd --no-enable --no-start
+
+# dh_fixperms would open /var/lib/swapspace up to 0755.
+override_dh_fixperms:
+	dh_fixperms
+	chmod 0700 debian/swapspace/var/lib/swapspace
+
+override_dh_strip:
+	dh_strip --no-automatic-dbgsym
+
+override_dh_clean:
+	dh_clean
+	rm -f debian/swapspace.service

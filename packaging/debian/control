@@ -1,0 +1,20 @@
+Source: swapspace
+Section: admin
+Priority: optional
+Maintainer: Cristian Magherusan-Stanciu <95209+cristim@users.noreply.github.com>
+Build-Depends: debhelper-compat (= 13), autoconf, automake
+Standards-Version: 4.7.0
+Rules-Requires-Root: no
+Homepage: https://github.com/Tookmund/swapspace
+
+Package: swapspace
+Architecture: any
+Depends: ${misc:Depends}, ${shlibs:Depends}
+Description: dynamic swap space manager
+ Swapspace watches memory usage and creates swap files in a dedicated
+ directory when the system needs more virtual memory, then removes them
+ again once the pressure is gone. This avoids sizing a swap partition
+ in advance.
+ .
+ The systemd unit is installed but neither enabled nor started; enable it
+ with "systemctl enable --now swapspace".

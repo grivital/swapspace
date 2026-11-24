@@ -1,0 +1,2 @@
+# swapspace swap file directory, must stay inaccessible to non-root users
+d /var/lib/swapspace 0700 root root -

@@ -91,6 +91,23 @@ already in use.  But that is of course the price you pay for virtual memory:
 slower but cheaper.  If your system is too slow because there's not enough
 memory, the ultimate answer is still: try to use less or buy more!
 
+Packaging
+---------
+`packaging/build.sh <arch|deb|rpm> [outdir]` builds a package from the
+current commit (`git archive HEAD`, so commit first; any ref works) and
+prints where it put it, by default under `./packages`:
+
+    packaging/build.sh arch
+
+It reports missing build tools. `--install-deps` installs them but only
+runs in containers and CI, as it upgrades the system.
+`packaging/smoke.sh <target> <package-file>` installs a package in a
+throwaway container and checks it. The packages install the systemd unit
+and a tmpfiles entry but do not enable or start the service (the deb never
+starts or restarts it either: restart it after an upgrade). CI builds and
+smoke-tests Arch, Debian, Ubuntu and Fedora packages and uploads them as
+artifacts.
+
 See also
 --------
 Home page: https://github.com/Tookmund/swapspace

@@ -80,3 +80,44 @@ jobs:
       - name: Generate configure
         run: autoreconf -i
       - run: ./configure && make distcheck
+
+  packages:
+    name: packages (${{ matrix.id }})
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    container: ${{ matrix.image }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {id: arch, target: arch, image: "archlinux:base-devel"}
+          - {id: debian-stable, target: deb, image: "debian:stable"}
+          - {id: ubuntu-24.04, target: deb, image: "ubuntu:24.04"}
+          - {id: fedora, target: rpm, image: "fedora:latest"}
+    steps:
+      # The minimal images lack git, and checkout needs it for fetch-depth: 0.
+      - name: Install git
+        env:
+          TARGET: ${{ matrix.target }}
+        run: |
+          case "$TARGET" in
+            arch) pacman -Syu --noconfirm --needed git ;;
+            deb) apt-get update && apt-get install -y git ca-certificates ;;
+            rpm) dnf install -y git-core ;;
+          esac
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      # The workspace is owned by another uid than the container user.
+      - name: Trust the workspace
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+      - name: Build the package
+        run: packaging/build.sh ${{ matrix.target }} packages --install-deps
+      - name: Smoke test the package
+        run: packaging/smoke.sh ${{ matrix.target }} packages/*
+      - uses: actions/upload-artifact@v4
+        with:
+          name: swapspace-${{ matrix.id }}
+          path: packages/*
+          if-no-files-found: error

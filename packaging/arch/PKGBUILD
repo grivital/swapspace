@@ -1,0 +1,46 @@
+# Built by packaging/build.sh, which prepares the source tarball from git
+# and exports SWAPSPACE_PKGVER (e.g. 1.19+git123.gabc1234).
+pkgname=swapspace
+pkgver=${SWAPSPACE_PKGVER:?run packaging/build.sh arch instead of makepkg}
+pkgrel=1
+pkgdesc='Dynamic swap space manager that creates and removes swap files on demand'
+arch=('x86_64' 'aarch64')
+url='https://github.com/Tookmund/swapspace'
+license=('GPL-2.0-or-later')
+depends=('glibc')
+makedepends=('autoconf' 'automake')
+backup=('etc/swapspace.conf')
+options=('!debug')
+source=("$pkgname-$pkgver.tar.gz"
+        'swapspace.tmpfiles')
+# The tarball is generated from the local checkout on every build.
+sha256sums=('SKIP' 'SKIP')
+
+build() {
+  cd "$pkgname-$pkgver"
+  autoreconf -fi
+  ./configure --prefix=/usr --sysconfdir=/etc --localstatedir=/var \
+    --sbindir=/usr/bin
+  make
+}
+
+check() {
+  cd "$pkgname-$pkgver"
+  make check
+}
+
+package() {
+  cd "$pkgname-$pkgver"
+  make DESTDIR="$pkgdir" install
+
+  # Upstream's unit points at /usr/local/sbin and "make install" skips it.
+  sed 's|/usr/local/sbin/swapspace|/usr/bin/swapspace|' swapspace.service |
+    install -Dm644 /dev/stdin "$pkgdir/usr/lib/systemd/system/swapspace.service"
+  install -Dm644 "$srcdir/swapspace.tmpfiles" \
+    "$pkgdir/usr/lib/tmpfiles.d/swapspace.conf"
+
+  # "make install" does not install the man page either.
+  install -Dm644 doc/swapspace.8 "$pkgdir/usr/share/man/man8/swapspace.8"
+  install -Dm644 -t "$pkgdir/usr/share/doc/$pkgname" README README.md NEWS
+  install -Dm644 COPYING "$pkgdir/usr/share/licenses/$pkgname/COPYING"
+}

@@ -17,3 +17,4 @@ tests/test_calc
 tests/fuzz_meminfo
 tests/*.log
 tests/*.trs
+/packages/
